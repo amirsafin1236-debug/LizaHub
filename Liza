@@ -1,6 +1,5 @@
-
---// LizaHub v4.1 | BUILDING & MOBILE FIX
---// LocalScript -> StarterPlayer -> StarterPlayerScripts
+-- LizaHub v4.2 | PHYSICS + HELD TOOLS + RGB PALETTE
+-- LocalScript -> StarterPlayer -> StarterPlayerScripts
 
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
@@ -11,19 +10,13 @@ local Lighting = game:GetService("Lighting")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
---// CONFIG
-
 local HUB_NAME = "LizaHub"
 local ACCENT = Color3.fromRGB(255, 132, 35)
 local BACKGROUND = Color3.fromRGB(22, 23, 29)
 local MENU_FACTOR = 1 / 1.45
 
 local oldGui = playerGui:FindFirstChild("LizaHub")
-if oldGui then
-	oldGui:Destroy()
-end
-
---// HELPERS
+if oldGui then oldGui:Destroy() end
 
 local function make(class, props, parent)
 	local obj = Instance.new(class)
@@ -63,16 +56,14 @@ local function getCharacter()
 end
 
 local function getHumanoid()
-	local character = getCharacter()
-	return character and character:FindFirstChildOfClass("Humanoid")
+	local char = getCharacter()
+	return char and char:FindFirstChildOfClass("Humanoid")
 end
 
 local function getRoot()
-	local character = getCharacter()
-	return character and character:FindFirstChild("HumanoidRootPart")
+	local char = getCharacter()
+	return char and char:FindFirstChild("HumanoidRootPart")
 end
-
---// GUI ROOT
 
 local gui = make("ScreenGui", {
 	Name = "LizaHub",
@@ -80,8 +71,6 @@ local gui = make("ScreenGui", {
 	IgnoreGuiInset = true,
 	ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 }, playerGui)
-
---// MAIN WINDOW
 
 local main = make("Frame", {
 	Name = "Main",
@@ -94,7 +83,7 @@ local main = make("Frame", {
 }, gui)
 
 corner(main, 12)
-stroke(main, ACCENT, 1.5)
+local mainStroke = stroke(main, ACCENT, 1.5)
 
 local mainScale = make("UIScale", {
 	Scale = MENU_FACTOR
@@ -103,14 +92,8 @@ local mainScale = make("UIScale", {
 local function fitScreen()
 	local camera = workspace.CurrentCamera
 	if not camera then return end
-
 	local viewport = camera.ViewportSize
-	local fit = math.min(
-		(viewport.X - 24) / 490,
-		(viewport.Y - 24) / 390,
-		1
-	)
-
+	local fit = math.min((viewport.X - 24) / 490, (viewport.Y - 24) / 390, 1)
 	mainScale.Scale = math.max(0.3, fit * MENU_FACTOR)
 end
 
@@ -119,8 +102,6 @@ fitScreen()
 if workspace.CurrentCamera then
 	workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fitScreen)
 end
-
---// HEADER
 
 local header = make("Frame", {
 	Name = "Header",
@@ -134,7 +115,7 @@ local title = make("TextLabel", {
 	Position = UDim2.fromOffset(14, 0),
 	Size = UDim2.new(1, -100, 1, 0),
 	BackgroundTransparency = 1,
-	Text = HUB_NAME .. "  |  ORANGE EDITION",
+	Text = HUB_NAME .. " | PHYSICS EDITION",
 	TextColor3 = ACCENT,
 	Font = Enum.Font.GothamBold,
 	TextSize = 15,
@@ -151,10 +132,7 @@ local closeButton = make("TextButton", {
 	BackgroundColor3 = Color3.fromRGB(60, 42, 40),
 	BorderSizePixel = 0
 }, header)
-
 corner(closeButton, 7)
-
---// SIDEBAR
 
 local sidebar = make("Frame", {
 	Position = UDim2.fromOffset(9, 54),
@@ -162,7 +140,6 @@ local sidebar = make("Frame", {
 	BackgroundColor3 = Color3.fromRGB(28, 29, 36),
 	BorderSizePixel = 0
 }, main)
-
 corner(sidebar, 9)
 
 local tabList = make("Frame", {
@@ -176,8 +153,6 @@ make("UIListLayout", {
 	SortOrder = Enum.SortOrder.LayoutOrder
 }, tabList)
 
---// CONTENT
-
 local content = make("Frame", {
 	Position = UDim2.fromOffset(136, 54),
 	Size = UDim2.new(1, -145, 1, -64),
@@ -185,12 +160,11 @@ local content = make("Frame", {
 	BorderSizePixel = 0,
 	ClipsDescendants = true
 }, main)
-
 corner(content, 9)
 
 local pages = {}
 local tabButtons = {}
-local currentTab = nil
+local currentTab
 
 local function createPage(name)
 	local page = make("ScrollingFrame", {
@@ -223,22 +197,18 @@ end
 
 local function selectTab(name)
 	currentTab = name
-
 	for tabName, page in pairs(pages) do
 		page.Visible = tabName == name
 	end
-
 	for tabName, tabButton in pairs(tabButtons) do
 		tween(tabButton, 0.15, {
-			BackgroundColor3 = tabName == name
-				and ACCENT
-				or Color3.fromRGB(39, 40, 49)
+			BackgroundColor3 = tabName == name and ACCENT or Color3.fromRGB(39, 40, 49)
 		})
 	end
 end
 
 local function createTab(name, order)
-	local tabButton = make("TextButton", {
+	local b = make("TextButton", {
 		Name = name .. "Tab",
 		Size = UDim2.new(1, 0, 0, 35),
 		BackgroundColor3 = Color3.fromRGB(39, 40, 49),
@@ -251,17 +221,11 @@ local function createTab(name, order)
 		AutoButtonColor = false
 	}, tabList)
 
-	corner(tabButton, 7)
-	tabButtons[name] = tabButton
-
-	tabButton.Activated:Connect(function()
-		selectTab(name)
-	end)
-
+	corner(b, 7)
+	tabButtons[name] = b
+	b.Activated:Connect(function() selectTab(name) end)
 	return createPage(name)
 end
-
---// UI ELEMENTS
 
 local function section(page, text)
 	return make("TextLabel", {
@@ -283,6 +247,7 @@ local function label(page, text)
 		TextColor3 = Color3.fromRGB(215, 215, 222),
 		Font = Enum.Font.Gotham,
 		TextSize = 11,
+		TextWrapped = true,
 		TextXAlignment = Enum.TextXAlignment.Left
 	}, page)
 end
@@ -300,28 +265,15 @@ local function button(page, text, callback)
 	}, page)
 
 	corner(b, 7)
-
-	b.MouseEnter:Connect(function()
-		tween(b, 0.12, {
-			BackgroundColor3 = ACCENT
-		})
-	end)
-
-	b.MouseLeave:Connect(function()
-		tween(b, 0.12, {
-			BackgroundColor3 = Color3.fromRGB(43, 44, 53)
-		})
-	end)
+	b.MouseEnter:Connect(function() tween(b, 0.12, {BackgroundColor3 = ACCENT}) end)
+	b.MouseLeave:Connect(function() tween(b, 0.12, {BackgroundColor3 = Color3.fromRGB(43, 44, 53)}) end)
 
 	b.Activated:Connect(function()
 		if callback then
-			local success, err = pcall(callback)
-			if not success then
-				warn("[LizaHub] " .. tostring(err))
-			end
+			local ok, err = pcall(callback)
+			if not ok then warn("[LizaHub] " .. tostring(err)) end
 		end
 	end)
-
 	return b
 end
 
@@ -338,15 +290,10 @@ local function textBox(page, placeholder, defaultText, callback)
 		TextSize = 11,
 		ClearTextOnFocus = false
 	}, page)
-
 	corner(box, 7)
-
 	box.FocusLost:Connect(function()
-		if callback then
-			callback(box.Text)
-		end
+		if callback then callback(box.Text) end
 	end)
-
 	return box
 end
 
@@ -357,7 +304,6 @@ local function slider(page, name, minValue, maxValue, initialValue, callback)
 	}, page)
 
 	local value = initialValue
-
 	make("TextLabel", {
 		Size = UDim2.new(1, -50, 0, 20),
 		BackgroundTransparency = 1,
@@ -387,7 +333,6 @@ local function slider(page, name, minValue, maxValue, initialValue, callback)
 		Text = "",
 		AutoButtonColor = false
 	}, holder)
-
 	corner(track, 5)
 
 	local fill = make("Frame", {
@@ -395,60 +340,36 @@ local function slider(page, name, minValue, maxValue, initialValue, callback)
 		BackgroundColor3 = ACCENT,
 		BorderSizePixel = 0
 	}, track)
-
 	corner(fill, 5)
 
 	local dragging = false
-
 	local function setFromX(x)
 		local width = math.max(track.AbsoluteSize.X, 1)
-		local alpha = math.clamp(
-			(x - track.AbsolutePosition.X) / width,
-			0,
-			1
-		)
-
+		local alpha = math.clamp((x - track.AbsolutePosition.X) / width, 0, 1)
 		value = math.floor(minValue + (maxValue - minValue) * alpha)
 		valueLabel.Text = tostring(value)
 		fill.Size = UDim2.new(alpha, 0, 1, 0)
-
-		if callback then
-			callback(value)
-		end
+		if callback then callback(value) end
 	end
 
-	track.Activated:Connect(function()
-		setFromX(UIS:GetMouseLocation().X)
-	end)
-
 	track.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1
-			or input.UserInputType == Enum.UserInputType.Touch then
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 			dragging = true
 			setFromX(input.Position.X)
 		end
 	end)
-
 	UIS.InputChanged:Connect(function(input)
-		if dragging and (
-			input.UserInputType == Enum.UserInputType.MouseMovement
-			or input.UserInputType == Enum.UserInputType.Touch
-		) then
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
 			setFromX(input.Position.X)
 		end
 	end)
-
 	UIS.InputEnded:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1
-			or input.UserInputType == Enum.UserInputType.Touch then
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 			dragging = false
 		end
 	end)
-
 	return holder
 end
-
---// CREATE TABS
 
 local playerPage = createTab("Player", 1)
 local movementPage = createTab("Movement", 2)
@@ -457,7 +378,7 @@ local funPage = createTab("Fun", 4)
 local buildingPage = createTab("Building&Stuff", 5)
 local settingsPage = createTab("Settings", 6)
 
---// PLAYER TAB
+-- PLAYER
 
 section(playerPage, "PLAYER CONTROLS")
 
@@ -468,10 +389,7 @@ end)
 
 slider(playerPage, "JumpPower", 0, 150, 50, function(value)
 	local hum = getHumanoid()
-	if hum then
-		hum.UseJumpPower = true
-		hum.JumpPower = value
-	end
+	if hum then hum.UseJumpPower = true hum.JumpPower = value end
 end)
 
 button(playerPage, "Heal Character", function()
@@ -488,7 +406,7 @@ button(playerPage, "Refresh Character", function()
 	player:LoadCharacter()
 end)
 
---// MOVEMENT TAB
+-- MOVEMENT / FLIGHT
 
 section(movementPage, "MOVEMENT")
 
@@ -510,7 +428,6 @@ local mobileFlyFrame = make("Frame", {
 }, gui)
 
 local mobileUp = make("TextButton", {
-	Position = UDim2.fromOffset(0, 0),
 	Size = UDim2.fromOffset(52, 42),
 	Text = "UP",
 	TextColor3 = Color3.new(1, 1, 1),
@@ -535,24 +452,23 @@ local mobileDown = make("TextButton", {
 }, mobileFlyFrame)
 corner(mobileDown, 8)
 
+local function setVertical(value)
+	verticalDirection = value
+end
+
 mobileUp.InputBegan:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.Touch
-		or input.UserInputType == Enum.UserInputType.MouseButton1 then
-		verticalDirection = 1
+	if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+		setVertical(1)
 	end
 end)
-
 mobileDown.InputBegan:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.Touch
-		or input.UserInputType == Enum.UserInputType.MouseButton1 then
-		verticalDirection = -1
+	if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+		setVertical(-1)
 	end
 end)
-
 UIS.InputEnded:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.Touch
-		or input.UserInputType == Enum.UserInputType.MouseButton1 then
-		verticalDirection = 0
+	if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+		setVertical(0)
 	end
 end)
 
@@ -560,39 +476,18 @@ local function stopFly()
 	flying = false
 	verticalDirection = 0
 	mobileFlyFrame.Visible = false
-
-	if flyConnection then
-		flyConnection:Disconnect()
-		flyConnection = nil
-	end
-
-	if bodyVelocity then
-		bodyVelocity:Destroy()
-		bodyVelocity = nil
-	end
-
-	if bodyGyro then
-		bodyGyro:Destroy()
-		bodyGyro = nil
-	end
-
+	if flyConnection then flyConnection:Disconnect() flyConnection = nil end
+	if bodyVelocity then bodyVelocity:Destroy() bodyVelocity = nil end
+	if bodyGyro then bodyGyro:Destroy() bodyGyro = nil end
 	local root = getRoot()
 	if root then root.AssemblyLinearVelocity = Vector3.zero end
 end
 
 local function startFly()
-	if flying then
-		stopFly()
-		return
-	end
-
+	if flying then stopFly() return end
 	local root = getRoot()
 	local hum = getHumanoid()
-
-	if not root or not hum then
-		warn("[LizaHub] Character is not ready.")
-		return
-	end
+	if not root or not hum then return end
 
 	flying = true
 	hum.PlatformStand = false
@@ -614,22 +509,14 @@ local function startFly()
 
 	flyConnection = RunService.RenderStepped:Connect(function()
 		if not flying then return end
-
 		local currentRoot = getRoot()
 		local camera = workspace.CurrentCamera
-
-		if not currentRoot or not camera or not bodyVelocity or not bodyGyro then
-			stopFly()
-			return
-		end
+		if not currentRoot or not camera or not bodyVelocity or not bodyGyro then stopFly() return end
 
 		local direction = Vector3.zero
-
 		if UIS.TouchEnabled then
 			local currentHumanoid = getHumanoid()
-			if currentHumanoid and currentHumanoid.MoveDirection.Magnitude > 0 then
-				direction += currentHumanoid.MoveDirection
-			end
+			if currentHumanoid then direction += currentHumanoid.MoveDirection end
 		else
 			if UIS:IsKeyDown(Enum.KeyCode.W) then direction += camera.CFrame.LookVector end
 			if UIS:IsKeyDown(Enum.KeyCode.S) then direction -= camera.CFrame.LookVector end
@@ -640,37 +527,51 @@ local function startFly()
 		local up = UIS:IsKeyDown(Enum.KeyCode.Space) and 1 or 0
 		local down = UIS:IsKeyDown(Enum.KeyCode.LeftControl) and 1 or 0
 		direction += Vector3.new(0, up - down + verticalDirection, 0)
-
-		if direction.Magnitude > 0 then
-			direction = direction.Unit
-		end
-
+		if direction.Magnitude > 0 then direction = direction.Unit end
 		bodyVelocity.Velocity = direction * flySpeed
 		bodyGyro.CFrame = camera.CFrame
 	end)
 end
 
 button(movementPage, "Toggle Fly", startFly)
-
-slider(movementPage, "Fly Speed", 10, 200, 60, function(value)
-	flySpeed = value
-end)
-
+slider(movementPage, "Fly Speed", 10, 200, 60, function(value) flySpeed = value end)
 button(movementPage, "Stop Fly", stopFly)
-
 label(movementPage, "PC: WASD + Space/Ctrl")
-label(movementPage, "Mobile: joystick to move, UP / DOWN for height")
+label(movementPage, "Mobile: joystick + UP/DOWN")
 
---// ITEMS TAB - CUSTOM OBJECT BUILDER
+-- ITEM SYSTEM
 
-section(itemsPage, "CUSTOM OBJECT BUILDER")
-label(itemsPage, "Shape and mode controls")
+section(itemsPage, "CUSTOM OBJECTS")
+label(itemsPage, "Choose a shape, then create a Tool or throw it.")
 
 local objectShape = "Block"
 local objectMode = "Build / Place"
 local customObjects = {}
+local rgbObjects = {}
+local rgbEnabled = false
+local rgbConnection
 
-button(itemsPage, "Cycle Shape: Block / Sphere / Circle", function()
+local function registerRGB(obj)
+	rgbObjects[obj] = true
+end
+
+local function getTargetPosition()
+	local camera = workspace.CurrentCamera
+	if not camera then return nil end
+
+	local mousePos = UIS:GetMouseLocation()
+	local ray = camera:ViewportPointToRay(mousePos.X, mousePos.Y)
+
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	local char = getCharacter()
+	params.FilterDescendantsInstances = char and {char} or {}
+
+	local hit = workspace:Raycast(ray.Origin, ray.Direction * 500, params)
+	return hit and hit.Position or (ray.Origin + ray.Direction * 40)
+end
+
+button(itemsPage, "Shape: Block / Sphere / Circle", function()
 	if objectShape == "Block" then
 		objectShape = "Sphere"
 	elseif objectShape == "Sphere" then
@@ -693,7 +594,6 @@ make("UIListLayout", {
 	Padding = UDim.new(0, 5),
 	SortOrder = Enum.SortOrder.LayoutOrder
 }, modePanel)
-
 make("UIPadding", {
 	PaddingTop = UDim.new(0, 6),
 	PaddingBottom = UDim.new(0, 6),
@@ -711,9 +611,7 @@ local function addModeChoice(textValue, modeValue)
 		TextSize = 11,
 		Font = Enum.Font.GothamSemibold
 	}, modePanel)
-
 	corner(b, 6)
-
 	b.Activated:Connect(function()
 		objectMode = modeValue
 		modePanel.Visible = false
@@ -728,132 +626,102 @@ button(itemsPage, "Select Mode (open menu)", function()
 	modePanel.Visible = not modePanel.Visible
 end)
 
-local function getTargetPosition()
-	local camera = workspace.CurrentCamera
-	if not camera then return nil end
-
-	local pos = UIS:GetMouseLocation()
-	local ray = camera:ViewportPointToRay(pos.X, pos.Y)
-
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-
-	local character = getCharacter()
-	params.FilterDescendantsInstances = character and {character} or {}
-
-	local hit = workspace:Raycast(ray.Origin, ray.Direction * 500, params)
-	return hit and hit.Position or (ray.Origin + ray.Direction * 40)
+local function makeObjectPart(name, position, anchored)
+	local part = Instance.new("Part")
+	part.Name = name or "LizaHubCustomObject"
+	part.Size = objectShape == "Sphere" and Vector3.new(2, 2, 2)
+		or (objectShape == "Circle" and Vector3.new(3, 0.45, 3) or Vector3.new(2.5, 2.5, 2.5))
+	part.Shape = objectShape == "Sphere" and Enum.PartType.Ball
+		or (objectShape == "Circle" and Enum.PartType.Cylinder or Enum.PartType.Block)
+	part.Material = Enum.Material.SmoothPlastic
+	part.Color = ACCENT
+	part.Anchored = anchored
+	part.CanCollide = true
+	part.Position = position
+	return part
 end
 
 local function createCustomObject(position)
-	local part = Instance.new("Part")
-	part.Name = "LizaHubCustomObject"
-
-	part.Size = objectShape == "Sphere" and Vector3.new(2, 2, 2)
-		or (objectShape == "Circle" and Vector3.new(4, 0.35, 4) or Vector3.new(3, 3, 3))
-
-	part.Shape = objectShape == "Sphere" and Enum.PartType.Ball
-		or (objectShape == "Circle" and Enum.PartType.Cylinder or Enum.PartType.Block)
-
-	part.Material = Enum.Material.Neon
-	part.Color = ACCENT
-	part.Anchored = true
-	part.CanCollide = true
-	part.Position = position
+	local part = makeObjectPart("LizaHubCustomObject", position, true)
 	part.Parent = workspace
-
 	table.insert(customObjects, part)
+	registerRGB(part)
 	return part
 end
+
+local function makeHeldTool()
+	local backpack = player:FindFirstChildOfClass("Backpack") or player:WaitForChild("Backpack")
+	local tool = Instance.new("Tool")
+	tool.Name = "LizaHub " .. objectShape
+	tool.RequiresHandle = true
+	tool.CanBeDropped = true
+
+	local handle = makeObjectPart("Handle", Vector3.zero, false)
+	handle.Size = objectShape == "Sphere" and Vector3.new(1.1, 1.1, 1.1)
+		or (objectShape == "Circle" and Vector3.new(1.2, 0.22, 1.2) or Vector3.new(0.9, 0.9, 0.9))
+	handle.CanCollide = false
+	handle.Massless = true
+	handle.Parent = tool
+	tool.Parent = backpack
+
+	tool.Activated:Connect(function()
+		local root = getRoot()
+		local camera = workspace.CurrentCamera
+		if not root or not camera or not tool.Parent then return end
+
+		local target = getTargetPosition()
+		local spawnPosition = root.Position + camera.CFrame.LookVector * 3 + Vector3.new(0, 1.5, 0)
+		local projectile = makeObjectPart("LizaHubThrownObject", spawnPosition, false)
+		projectile.Parent = workspace
+
+		local offset = target and (target - spawnPosition) or camera.CFrame.LookVector
+		local direction = offset.Magnitude > 0 and offset.Unit or camera.CFrame.LookVector
+		projectile.AssemblyLinearVelocity = direction * 90 + Vector3.new(0, 12, 0)
+		projectile.AssemblyAngularVelocity = Vector3.new(math.random(-12, 12), math.random(-12, 12), math.random(-12, 12))
+
+		table.insert(customObjects, projectile)
+		registerRGB(projectile)
+	end)
+end
+
+button(itemsPage, "Create Held Tool", makeHeldTool)
 
 button(itemsPage, "Create / Use Object", function()
 	local root = getRoot()
 	if not root then return end
-
 	local target = getTargetPosition()
 
 	if objectMode == "Teleport" then
-		if target then
-			root.CFrame = CFrame.new(target + Vector3.new(0, 3, 0))
-		end
+		if target then root.CFrame = CFrame.new(target + Vector3.new(0, 3, 0)) end
 	elseif objectMode == "Throw" then
-		local part = createCustomObject(
-			root.Position + root.CFrame.LookVector * 4 + Vector3.new(0, 2, 0)
-		)
-
-		part.Anchored = false
+		local spawnPosition = root.Position + root.CFrame.LookVector * 4 + Vector3.new(0, 2, 0)
+		local part = makeObjectPart("LizaHubThrownObject", spawnPosition, false)
+		part.Parent = workspace
 
 		local offset = target and (target - part.Position) or root.CFrame.LookVector
 		local direction = offset.Magnitude > 0 and offset.Unit or root.CFrame.LookVector
+		part.AssemblyLinearVelocity = direction * 90 + Vector3.new(0, 15, 0)
+		part.AssemblyAngularVelocity = Vector3.new(math.random(-12, 12), math.random(-12, 12), math.random(-12, 12))
 
-		part.AssemblyLinearVelocity = direction * 85 + Vector3.new(0, 18, 0)
+		table.insert(customObjects, part)
+		registerRGB(part)
 	else
-		createCustomObject(
-			(target or (root.Position + root.CFrame.LookVector * 6))
-				+ Vector3.new(0, 1.5, 0)
-		)
+		createCustomObject((target or (root.Position + root.CFrame.LookVector * 6)) + Vector3.new(0, 1.5, 0))
 	end
 end)
 
 button(itemsPage, "Delete My Custom Objects", function()
 	for _, obj in ipairs(customObjects) do
-		if obj and obj.Parent then
-			obj:Destroy()
-		end
+		if obj and obj.Parent then obj:Destroy() end
 	end
 	table.clear(customObjects)
 end)
 
-label(itemsPage, "Build mode places parts at your aim point.")
-label(itemsPage, "Objects are client-side and may be local only.")
+label(itemsPage, "Thrown parts use Roblox physics locally.")
 
---// BUILDING & STUFF TAB
+-- BUILDING & STUFF
 
 section(buildingPage, "BUILDING & NEON OBJECTS")
-label(buildingPage, "Create an orb or anchored building part.")
-
-local rgbEnabled = false
-local rgbConnection
-local rgbObjects = {}
-
-local function registerRGB(obj)
-	rgbObjects[obj] = true
-end
-
-local function toggleRGB()
-	rgbEnabled = not rgbEnabled
-
-	if rgbConnection then
-		rgbConnection:Disconnect()
-		rgbConnection = nil
-	end
-
-	if rgbEnabled then
-		rgbConnection = RunService.Heartbeat:Connect(function()
-			local color = Color3.fromHSV((os.clock() * 0.25) % 1, 1, 1)
-
-			for obj in pairs(rgbObjects) do
-				if obj and obj.Parent then
-					obj.Color = color
-
-					local light = obj:FindFirstChildOfClass("PointLight")
-					if light then light.Color = color end
-				else
-					rgbObjects[obj] = nil
-				end
-			end
-		end)
-	else
-		for obj in pairs(rgbObjects) do
-			if obj and obj.Parent then
-				obj.Color = ACCENT
-
-				local light = obj:FindFirstChildOfClass("PointLight")
-				if light then light.Color = ACCENT end
-			end
-		end
-	end
-end
 
 button(buildingPage, "Create Neon Orb", function()
 	local root = getRoot()
@@ -879,14 +747,12 @@ button(buildingPage, "Create Neon Orb", function()
 	local force = Instance.new("BodyForce")
 	force.Force = Vector3.new(0, orb:GetMass() * workspace.Gravity, 0)
 	force.Parent = orb
-
 	registerRGB(orb)
 end)
 
 button(buildingPage, "Create Build Part", function()
 	local root = getRoot()
 	if not root then return end
-
 	local part = Instance.new("Part")
 	part.Name = "LizaHubBuildPart"
 	part.Size = Vector3.new(4, 1, 4)
@@ -896,39 +762,57 @@ button(buildingPage, "Create Build Part", function()
 	part.CanCollide = true
 	part.CFrame = root.CFrame * CFrame.new(0, 1, -6)
 	part.Parent = workspace
-
 	registerRGB(part)
 end)
 
-button(buildingPage, "Toggle RGB (Orb / Parts / Custom)", toggleRGB)
+button(buildingPage, "Toggle RGB (Orb / Parts / Custom)", function()
+	rgbEnabled = not rgbEnabled
+	if rgbConnection then rgbConnection:Disconnect() rgbConnection = nil end
+
+	if rgbEnabled then
+		rgbConnection = RunService.Heartbeat:Connect(function()
+			local color = Color3.fromHSV((os.clock() * 0.25) % 1, 1, 1)
+			for obj in pairs(rgbObjects) do
+				if obj and obj.Parent then
+					obj.Color = color
+					local light = obj:FindFirstChildOfClass("PointLight")
+					if light then light.Color = color end
+				else
+					rgbObjects[obj] = nil
+				end
+			end
+		end)
+	else
+		for obj in pairs(rgbObjects) do
+			if obj and obj.Parent then
+				obj.Color = ACCENT
+				local light = obj:FindFirstChildOfClass("PointLight")
+				if light then light.Color = ACCENT end
+			end
+		end
+	end
+end)
 
 button(buildingPage, "Remove My Build Objects", function()
 	for _, obj in ipairs(workspace:GetChildren()) do
-		if obj.Name == "LizaHubNeonOrb"
-			or obj.Name == "LizaHubBuildPart"
-			or obj.Name == "LizaHubCustomObject" then
-
+		if obj.Name == "LizaHubNeonOrb" or obj.Name == "LizaHubBuildPart" or obj.Name == "LizaHubCustomObject" or obj.Name == "LizaHubThrownObject" then
 			rgbObjects[obj] = nil
 			obj:Destroy()
 		end
 	end
-
 	table.clear(customObjects)
 end)
 
-label(buildingPage, "RGB cycles through colors for created objects.")
-label(buildingPage, "These objects may only be visible to you.")
+label(buildingPage, "Created parts may be visible only to you.")
 
---// FUN TAB
+-- FUN
 
 section(funPage, "FUN EFFECTS")
-section(funPage, "PLAYER EFFECTS")
 
 button(funPage, "Create Sparkles", function()
-	local character = getCharacter()
-	local root = character and character:FindFirstChild("HumanoidRootPart")
+	local char = getCharacter()
+	local root = char and char:FindFirstChild("HumanoidRootPart")
 	if not root then return end
-
 	local particles = Instance.new("ParticleEmitter")
 	particles.Name = "LizaHubSparkles"
 	particles.Texture = "rbxasset://textures/particles/sparkles_main.dds"
@@ -941,26 +825,16 @@ button(funPage, "Create Sparkles", function()
 end)
 
 button(funPage, "Remove My Effects", function()
-	local character = getCharacter()
-
-	if character then
-		for _, obj in ipairs(character:GetDescendants()) do
-			if obj.Name == "LizaHubSparkles" then
-				obj:Destroy()
-			end
-		end
-	end
-
-	for _, obj in ipairs(workspace:GetChildren()) do
-		if obj.Name == "LizaHubNeonOrb" then
-			obj:Destroy()
+	local char = getCharacter()
+	if char then
+		for _, obj in ipairs(char:GetDescendants()) do
+			if obj.Name == "LizaHubSparkles" then obj:Destroy() end
 		end
 	end
 end)
 
 button(funPage, "Toggle Orange Lighting", function()
 	local effect = Lighting:FindFirstChild("LizaHubOrangeTint")
-
 	if effect then
 		effect:Destroy()
 	else
@@ -974,7 +848,6 @@ end)
 
 button(funPage, "Toggle Bloom", function()
 	local effect = Lighting:FindFirstChild("LizaHubBloom")
-
 	if effect then
 		effect:Destroy()
 	else
@@ -988,69 +861,183 @@ button(funPage, "Toggle Bloom", function()
 end)
 
 button(funPage, "Remove LizaHub Lighting", function()
-	for _, name in ipairs({
-		"LizaHubOrangeTint",
-		"LizaHubBloom"
-	}) do
+	for _, name in ipairs({"LizaHubOrangeTint", "LizaHubBloom"}) do
 		local effect = Lighting:FindFirstChild(name)
 		if effect then effect:Destroy() end
 	end
 end)
 
---// SETTINGS TAB
+-- SETTINGS + RGB PALETTE
 
 section(settingsPage, "MENU SETTINGS")
 
 textBox(settingsPage, "Enter menu title", HUB_NAME, function(value)
 	if value:gsub("%s", "") ~= "" then
 		HUB_NAME = value
-		title.Text = HUB_NAME .. "  |  ORANGE EDITION"
+		title.Text = HUB_NAME .. " | PHYSICS EDITION"
 	end
 end)
 
 local function updateAccent(color)
 	ACCENT = color
-
 	title.TextColor3 = color
-	stroke(main, color, 1.5)
+	mainStroke.Color = color
 
-	for _, tabButton in pairs(tabButtons) do
-		if tabButton.Name == currentTab .. "Tab" then
+	for tabName, tabButton in pairs(tabButtons) do
+		if tabName == currentTab then
 			tabButton.BackgroundColor3 = color
 		end
 	end
 
 	for _, object in ipairs(gui:GetDescendants()) do
-		if object:IsA("Frame") and object.Name == "Fill" then
+		if object:IsA("ScrollingFrame") then
+			object.ScrollBarImageColor3 = color
+		elseif object:IsA("TextLabel") and object.TextColor3 == Color3.fromRGB(255, 132, 35) then
+			object.TextColor3 = color
+		elseif object:IsA("TextButton") and (object.Text == "UP" or object.Text == "DOWN") then
 			object.BackgroundColor3 = color
-		elseif object:IsA("TextButton") and (
-			object.Text == "UP" or object.Text == "DOWN"
-		) then
+		elseif object:IsA("Frame") and object.Name == "Fill" then
 			object.BackgroundColor3 = color
 		end
 	end
 end
 
-section(settingsPage, "ACCENT COLOR")
+section(settingsPage, "RGB COLOR PALETTE")
+label(settingsPage, "Tap the square to choose saturation and brightness.")
 
-button(settingsPage, "Orange", function()
-	updateAccent(Color3.fromRGB(255, 132, 35))
+local paletteHue, paletteSat, paletteVal = 0.075, 0.86, 1
+local paletteDragging, draggingHue = false, false
+
+local palette = make("TextButton", {
+	Name = "RGBPalette",
+	Size = UDim2.new(1, -2, 0, 112),
+	BackgroundColor3 = Color3.fromHSV(paletteHue, 1, 1),
+	BorderSizePixel = 0,
+	Text = "",
+	AutoButtonColor = false,
+	ClipsDescendants = true
+}, settingsPage)
+corner(palette, 7)
+
+local whiteOverlay = make("Frame", {
+	Size = UDim2.fromScale(1, 1),
+	BackgroundColor3 = Color3.new(1, 1, 1),
+	BorderSizePixel = 0,
+	ZIndex = 2
+}, palette)
+make("UIGradient", {
+	Rotation = 0,
+	Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.new(1, 1, 1)),
+	Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0),
+		NumberSequenceKeypoint.new(1, 1)
+	})
+}, whiteOverlay)
+
+local blackOverlay = make("Frame", {
+	Size = UDim2.fromScale(1, 1),
+	BackgroundColor3 = Color3.new(0, 0, 0),
+	BorderSizePixel = 0,
+	ZIndex = 3
+}, palette)
+make("UIGradient", {
+	Rotation = 90,
+	Color = ColorSequence.new(Color3.new(0, 0, 0), Color3.new(0, 0, 0)),
+	Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 1),
+		NumberSequenceKeypoint.new(1, 0)
+	})
+}, blackOverlay)
+
+local paletteCursor = make("Frame", {
+	Name = "PaletteCursor",
+	Size = UDim2.fromOffset(12, 12),
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(paletteSat, 1 - paletteVal),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	ZIndex = 5
+}, palette)
+corner(paletteCursor, 6)
+stroke(paletteCursor, Color3.new(1, 1, 1), 2)
+
+local hueBar = make("TextButton", {
+	Name = "HueBar",
+	Size = UDim2.new(1, -2, 0, 16),
+	BackgroundColor3 = Color3.new(1, 1, 1),
+	BorderSizePixel = 0,
+	Text = "",
+	AutoButtonColor = false
+}, settingsPage)
+corner(hueBar, 6)
+make("UIGradient", {
+	Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 0, 0)),
+		ColorSequenceKeypoint.new(0.17, Color3.fromRGB(255, 255, 0)),
+		ColorSequenceKeypoint.new(0.33, Color3.fromRGB(0, 255, 0)),
+		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 255, 255)),
+		ColorSequenceKeypoint.new(0.67, Color3.fromRGB(0, 0, 255)),
+		ColorSequenceKeypoint.new(0.83, Color3.fromRGB(255, 0, 255)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 0, 0))
+	})
+}, hueBar)
+
+local colorPreview = make("Frame", {
+	Size = UDim2.new(1, -2, 0, 28),
+	BackgroundColor3 = ACCENT,
+	BorderSizePixel = 0
+}, settingsPage)
+corner(colorPreview, 7)
+stroke(colorPreview, Color3.new(1, 1, 1), 1)
+
+local function applyPaletteColor()
+	local color = Color3.fromHSV(paletteHue, paletteSat, paletteVal)
+	palette.BackgroundColor3 = Color3.fromHSV(paletteHue, 1, 1)
+	paletteCursor.Position = UDim2.fromScale(paletteSat, 1 - paletteVal)
+	colorPreview.BackgroundColor3 = color
+	updateAccent(color)
+end
+
+local function setPaletteFromPosition(x, y, hueOnly)
+	if hueOnly then
+		paletteHue = math.clamp((x - hueBar.AbsolutePosition.X) / math.max(hueBar.AbsoluteSize.X, 1), 0, 1)
+	else
+		paletteSat = math.clamp((x - palette.AbsolutePosition.X) / math.max(palette.AbsoluteSize.X, 1), 0, 1)
+		paletteVal = 1 - math.clamp((y - palette.AbsolutePosition.Y) / math.max(palette.AbsoluteSize.Y, 1), 0, 1)
+	end
+	applyPaletteColor()
+end
+
+palette.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		paletteDragging, draggingHue = true, false
+		setPaletteFromPosition(input.Position.X, input.Position.Y, false)
+	end
 end)
 
-button(settingsPage, "Red", function()
-	updateAccent(Color3.fromRGB(255, 55, 65))
+hueBar.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		paletteDragging, draggingHue = true, true
+		setPaletteFromPosition(input.Position.X, input.Position.Y, true)
+	end
 end)
 
-button(settingsPage, "Blue", function()
-	updateAccent(Color3.fromRGB(55, 145, 255))
+UIS.InputChanged:Connect(function(input)
+	if paletteDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+		setPaletteFromPosition(input.Position.X, input.Position.Y, draggingHue)
+	end
 end)
 
-button(settingsPage, "Purple", function()
-	updateAccent(Color3.fromRGB(175, 85, 255))
+UIS.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		paletteDragging = false
+	end
 end)
 
-button(settingsPage, "Green", function()
-	updateAccent(Color3.fromRGB(65, 220, 125))
+button(settingsPage, "Apply RGB Color", applyPaletteColor)
+button(settingsPage, "Reset Orange", function()
+	paletteHue, paletteSat, paletteVal = 0.075, 0.86, 1
+	applyPaletteColor()
 end)
 
 section(settingsPage, "BACKGROUND")
@@ -1065,20 +1052,16 @@ button(settingsPage, "Light Background", function()
 	main.BackgroundColor3 = BACKGROUND
 end)
 
-button(settingsPage, "Reset Menu Scale", function()
-	fitScreen()
-end)
+button(settingsPage, "Reset Menu Scale", fitScreen)
 
---// DRAG WINDOW
+-- DRAG WINDOW
 
 local dragging = false
 local dragStart
 local startPosition
 
 header.InputBegan:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1
-		or input.UserInputType == Enum.UserInputType.Touch then
-
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 		dragging = true
 		dragStart = input.Position
 		startPosition = main.Position
@@ -1086,13 +1069,8 @@ header.InputBegan:Connect(function(input)
 end)
 
 UIS.InputChanged:Connect(function(input)
-	if not dragging then return end
-
-	if input.UserInputType == Enum.UserInputType.MouseMovement
-		or input.UserInputType == Enum.UserInputType.Touch then
-
+	if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
 		local delta = input.Position - dragStart
-
 		main.Position = UDim2.new(
 			startPosition.X.Scale,
 			startPosition.X.Offset + delta.X,
@@ -1103,13 +1081,10 @@ UIS.InputChanged:Connect(function(input)
 end)
 
 UIS.InputEnded:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1
-		or input.UserInputType == Enum.UserInputType.Touch then
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 		dragging = false
 	end
 end)
-
---// REOPEN BUTTON
 
 local reopen = make("TextButton", {
 	Name = "ReopenButton",
@@ -1124,22 +1099,15 @@ local reopen = make("TextButton", {
 	Font = Enum.Font.GothamBold,
 	Visible = false
 }, gui)
-
 corner(reopen, 12)
 stroke(reopen, ACCENT, 1.5)
-
---// OPEN / CLOSE
 
 local menuOpen = true
 
 local function hideMenu()
 	if not menuOpen then return end
 	menuOpen = false
-
-	tween(mainScale, 0.16, {
-		Scale = mainScale.Scale * 0.9
-	})
-
+	tween(mainScale, 0.16, {Scale = mainScale.Scale * 0.9})
 	task.delay(0.16, function()
 		if not menuOpen then
 			main.Visible = false
@@ -1152,41 +1120,26 @@ end
 local function showMenu()
 	if menuOpen then return end
 	menuOpen = true
-
 	reopen.Visible = false
 	main.Visible = true
-
 	local target = mainScale.Scale
 	mainScale.Scale = target * 0.88
-
-	tween(mainScale, 0.2, {
-		Scale = target
-	})
+	tween(mainScale, 0.2, {Scale = target})
 end
 
 closeButton.Activated:Connect(hideMenu)
 reopen.Activated:Connect(showMenu)
 
 UIS.InputBegan:Connect(function(input, processed)
-	if processed then return end
-
-	if input.KeyCode == Enum.KeyCode.RightShift then
-		if menuOpen then
-			hideMenu()
-		else
-			showMenu()
-		end
+	if not processed and input.KeyCode == Enum.KeyCode.RightShift then
+		if menuOpen then hideMenu() else showMenu() end
 	end
 end)
 
---// DEFAULT PAGE
-
 selectTab("Player")
-
---// RESPAWN SUPPORT
 
 player.CharacterAdded:Connect(function()
 	stopFly()
 end)
 
-print("LizaHub v4.1 | Building & Mobile Fix loaded!")
+print("LizaHub v4.2 loaded")
