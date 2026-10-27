@@ -1,44 +1,67 @@
 
 --[[
-    LizaHub v5.5
+    LizaHub v5.0
     LocalScript -> StarterPlayer -> StarterPlayerScripts
-    Local testing only. No server scripts.
+
+    Developer/testing panel for your own Roblox experience.
+    Configs are kept for the current session only.
+    Persistent configs require a server Script + DataStoreService.
 ]]
 
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
-local Lighting = game:GetService("Lighting")
 local TweenService = game:GetService("TweenService")
+local Lighting = game:GetService("Lighting")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
+--==================================================
+-- SETTINGS
+--==================================================
+
+local HUB_NAME = "LizaHub"
 local ACCENT = Color3.fromRGB(255, 132, 35)
-local BG = Color3.fromRGB(22, 23, 29)
-local selectedMode = "Place"
-local shape = "Block"
-local customObjects = {}
-local flying = false
-local flyConnection
-local flySpeed = 60
+local BACKGROUND = Color3.fromRGB(22, 23, 29)
+local MENU_SCALE = 1
+local BACKGROUND_IMAGE = ""
+local selectedTab = "Player"
 
-local old = playerGui:FindFirstChild("LizaHub")
-if old then old:Destroy() end
+local oldGui = playerGui:FindFirstChild("LizaHub")
+if oldGui then oldGui:Destroy() end
 
-local function make(class, props, parent)
-    local obj = Instance.new(class)
-    for k, v in pairs(props or {}) do
-        obj[k] = v
+local function make(className, properties, parent)
+    local object = Instance.new(className)
+    for key, value in pairs(properties or {}) do
+        object[key] = value
     end
-    obj.Parent = parent
-    return obj
+    object.Parent = parent
+    return object
 end
 
-local function corner(obj, radius)
+local function round(object, radius)
     make("UICorner", {
         CornerRadius = UDim.new(0, radius or 8)
-    }, obj)
+    }, object)
+end
+
+local function outline(object, color, thickness)
+    return make("UIStroke", {
+        Color = color or ACCENT,
+        Thickness = thickness or 1,
+        Transparency = 0.2
+    }, object)
+end
+
+local function tween(object, duration, properties)
+    local animation = TweenService:Create(
+        object,
+        TweenInfo.new(duration, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+        properties
+    )
+    animation:Play()
+    return animation
 end
 
 local function getCharacter()
@@ -46,78 +69,178 @@ local function getCharacter()
 end
 
 local function getHumanoid()
-    local c = getCharacter()
-    return c and c:FindFirstChildOfClass("Humanoid")
+    local character = getCharacter()
+    return character and character:FindFirstChildOfClass("Humanoid")
 end
 
 local function getRoot()
-    local c = getCharacter()
-    return c and c:FindFirstChild("HumanoidRootPart")
+    local character = getCharacter()
+    return character and character:FindFirstChild("HumanoidRootPart")
 end
+
+--==================================================
+-- GUI ROOT
+--==================================================
 
 local gui = make("ScreenGui", {
     Name = "LizaHub",
     ResetOnSpawn = false,
+    IgnoreGuiInset = true,
     ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 }, playerGui)
 
+--==================================================
+-- STARTUP DISCLAIMER
+--==================================================
+
+local splash = make("Frame", {
+    Name = "Disclaimer",
+    Size = UDim2.fromScale(1, 1),
+    BackgroundColor3 = Color3.fromRGB(9, 10, 14),
+    BackgroundTransparency = 0.05,
+    BorderSizePixel = 0,
+    ZIndex = 100
+}, gui)
+
+local splashTitle = make("TextLabel", {
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.fromScale(0.5, 0.36),
+    Size = UDim2.new(0.86, 0, 0, 80),
+    BackgroundTransparency = 1,
+    Text = "LizaHub",
+    TextColor3 = ACCENT,
+    Font = Enum.Font.GothamBlack,
+    TextScaled = true,
+    ZIndex = 101
+}, splash)
+
+local disclaimerText = make("TextLabel", {
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.fromScale(0.5, 0.51),
+    Size = UDim2.new(0.84, 0, 0, 100),
+    BackgroundTransparency = 1,
+    Text = "Только для тестов и веселья.\nНе предназначено для читерства.",
+    TextColor3 = Color3.fromRGB(235, 235, 240),
+    Font = Enum.Font.GothamMedium,
+    TextSize = 18,
+    TextWrapped = true,
+    ZIndex = 101
+}, splash)
+
+local continueButton = make("TextButton", {
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.fromScale(0.5, 0.67),
+    Size = UDim2.fromOffset(190, 46),
+    BackgroundColor3 = ACCENT,
+    BorderSizePixel = 0,
+    Text = "Продолжить",
+    TextColor3 = Color3.new(1, 1, 1),
+    Font = Enum.Font.GothamBold,
+    TextSize = 16,
+    ZIndex = 101
+}, splash)
+round(continueButton, 10)
+
+--==================================================
+-- MAIN WINDOW
+--==================================================
+
 local main = make("Frame", {
     Name = "Main",
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.fromScale(0.5, 0.5),
     Size = UDim2.fromOffset(570, 430),
-    Position = UDim2.new(0.5, -285, 0.5, -215),
-    BackgroundColor3 = BG,
-    BorderSizePixel = 0
+    BackgroundColor3 = BACKGROUND,
+    BorderSizePixel = 0,
+    ClipsDescendants = true,
+    Visible = false
 }, gui)
-corner(main, 12)
+round(main, 12)
+
+local mainStroke = outline(main, ACCENT, 1.5)
+
+local scaleObject = make("UIScale", {
+    Scale = MENU_SCALE
+}, main)
+
+local backgroundImage = make("ImageLabel", {
+    Name = "CustomBackground",
+    Size = UDim2.fromScale(1, 1),
+    BackgroundTransparency = 1,
+    Image = "",
+    ImageTransparency = 0.25,
+    ScaleType = Enum.ScaleType.Crop,
+    ZIndex = 0
+}, main)
 
 local header = make("Frame", {
-    Size = UDim2.new(1, 0, 0, 44),
+    Name = "Header",
+    Size = UDim2.new(1, 0, 0, 46),
     BackgroundColor3 = Color3.fromRGB(31, 32, 40),
-    BorderSizePixel = 0
+    BorderSizePixel = 0,
+    ZIndex = 2
 }, main)
-corner(header, 10)
 
-make("TextLabel", {
+local titleLabel = make("TextLabel", {
     Position = UDim2.fromOffset(14, 0),
-    Size = UDim2.new(1, -65, 1, 0),
+    Size = UDim2.new(1, -100, 1, 0),
     BackgroundTransparency = 1,
-    Text = "LizaHub v5.5",
+    Text = HUB_NAME,
     TextColor3 = ACCENT,
     Font = Enum.Font.GothamBold,
-    TextSize = 17,
-    TextXAlignment = Enum.TextXAlignment.Left
+    TextSize = 16,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 3
 }, header)
 
-local close = make("TextButton", {
-    Position = UDim2.new(1, -38, 0, 7),
-    Size = UDim2.fromOffset(30, 30),
+local closeButton = make("TextButton", {
+    Position = UDim2.new(1, -39, 0, 8),
+    Size = UDim2.fromOffset(29, 29),
+    BackgroundColor3 = Color3.fromRGB(65, 42, 42),
+    BorderSizePixel = 0,
     Text = "×",
-    TextSize = 22,
     TextColor3 = Color3.new(1, 1, 1),
-    BackgroundColor3 = Color3.fromRGB(75, 40, 40),
-    BorderSizePixel = 0
+    TextSize = 22,
+    Font = Enum.Font.GothamBold,
+    ZIndex = 3
 }, header)
-corner(close, 6)
+round(closeButton, 7)
 
 local sidebar = make("Frame", {
-    Position = UDim2.fromOffset(9, 53),
-    Size = UDim2.new(0, 125, 1, -62),
+    Position = UDim2.fromOffset(9, 55),
+    Size = UDim2.new(0, 132, 1, -64),
     BackgroundColor3 = Color3.fromRGB(28, 29, 36),
-    BorderSizePixel = 0
+    BackgroundTransparency = 0.05,
+    BorderSizePixel = 0,
+    ZIndex = 2
 }, main)
-corner(sidebar, 8)
+round(sidebar, 9)
+
+local tabList = make("Frame", {
+    Position = UDim2.fromOffset(6, 7),
+    Size = UDim2.new(1, -12, 1, -14),
+    BackgroundTransparency = 1
+}, sidebar)
+
+make("UIListLayout", {
+    Padding = UDim.new(0, 6),
+    SortOrder = Enum.SortOrder.LayoutOrder
+}, tabList)
 
 local content = make("Frame", {
-    Position = UDim2.fromOffset(143, 53),
-    Size = UDim2.new(1, -152, 1, -62),
+    Position = UDim2.fromOffset(149, 55),
+    Size = UDim2.new(1, -158, 1, -64),
     BackgroundColor3 = Color3.fromRGB(28, 29, 36),
+    BackgroundTransparency = 0.04,
     BorderSizePixel = 0,
-    ClipsDescendants = true
+    ClipsDescendants = true,
+    ZIndex = 2
 }, main)
-corner(content, 8)
+round(content, 9)
 
 local pages = {}
 local tabButtons = {}
+local currentTab = nil
 
 local function createPage(name)
     local page = make("ScrollingFrame", {
@@ -129,12 +252,13 @@ local function createPage(name)
         ScrollBarImageColor3 = ACCENT,
         AutomaticCanvasSize = Enum.AutomaticSize.Y,
         CanvasSize = UDim2.new(),
-        Visible = false
+        Visible = false,
+        ZIndex = 3
     }, content)
 
     make("UIPadding", {
         PaddingTop = UDim.new(0, 9),
-        PaddingBottom = UDim.new(0, 9),
+        PaddingBottom = UDim.new(0, 10),
         PaddingLeft = UDim.new(0, 9),
         PaddingRight = UDim.new(0, 9)
     }, page)
@@ -149,214 +273,466 @@ local function createPage(name)
 end
 
 local function selectTab(name)
+    currentTab = name
+    selectedTab = name
+
     for tabName, page in pairs(pages) do
         page.Visible = tabName == name
-        tabButtons[tabName].BackgroundColor3 =
-            tabName == name and ACCENT
-            or Color3.fromRGB(43, 44, 53)
+    end
+
+    for tabName, buttonObject in pairs(tabButtons) do
+        buttonObject.BackgroundColor3 =
+            tabName == name and ACCENT or Color3.fromRGB(42, 43, 52)
     end
 end
 
-local function button(parent, text, callback)
-    local b = make("TextButton", {
-        Size = UDim2.new(1, -2, 0, 34),
-        BackgroundColor3 = Color3.fromRGB(43, 44, 53),
-        BorderSizePixel = 0,
-        Text = text,
-        TextColor3 = Color3.new(1, 1, 1),
-        Font = Enum.Font.GothamSemibold,
-        TextSize = 12
-    }, parent)
-    corner(b, 7)
-    b.Activated:Connect(function()
-        local ok, err = pcall(callback)
-        if not ok then warn("[LizaHub] " .. tostring(err)) end
-    end)
-    return b
-end
-
-local function label(parent, text)
-    return make("TextLabel", {
-        Size = UDim2.new(1, -2, 0, 29),
-        BackgroundTransparency = 1,
-        Text = text,
-        TextColor3 = ACCENT,
-        Font = Enum.Font.GothamBold,
-        TextSize = 12,
-        TextWrapped = true,
-        TextXAlignment = Enum.TextXAlignment.Left
-    }, parent)
-end
-
-local function textBox(parent, placeholder, initial)
-    local box = make("TextBox", {
-        Size = UDim2.new(1, -2, 0, 34),
-        BackgroundColor3 = Color3.fromRGB(39, 40, 49),
-        BorderSizePixel = 0,
-        Text = initial or "",
-        PlaceholderText = placeholder,
-        TextColor3 = Color3.new(1, 1, 1),
-        PlaceholderColor3 = Color3.fromRGB(150, 150, 160),
-        Font = Enum.Font.Gotham,
-        TextSize = 12,
-        ClearTextOnFocus = false
-    }, parent)
-    corner(box, 7)
-    return box
-end
-
-local tabNames = {
-    "Player", "Movement", "Items", "Fun", "Building", "Settings"
-}
-
-for i, name in ipairs(tabNames) do
-    local b = make("TextButton", {
-        Size = UDim2.new(1, -12, 0, 34),
-        Position = UDim2.fromOffset(6, 6),
-        BackgroundColor3 = Color3.fromRGB(43, 44, 53),
+local function createTab(name, order)
+    local tabButton = make("TextButton", {
+        Name = name .. "Tab",
+        Size = UDim2.new(1, 0, 0, 34),
+        BackgroundColor3 = Color3.fromRGB(42, 43, 52),
         BorderSizePixel = 0,
         Text = name,
         TextColor3 = Color3.new(1, 1, 1),
         Font = Enum.Font.GothamSemibold,
         TextSize = 12,
-        LayoutOrder = i
-    }, sidebar)
-    corner(b, 7)
-    tabButtons[name] = b
-    createPage(name)
-    b.Activated:Connect(function()
+        LayoutOrder = order,
+        AutoButtonColor = false,
+        ZIndex = 4
+    }, tabList)
+
+    round(tabButton, 7)
+    tabButtons[name] = tabButton
+    tabButton.Activated:Connect(function()
         selectTab(name)
+    end)
+
+    return createPage(name)
+end
+
+local function section(page, text)
+    return make("TextLabel", {
+        Size = UDim2.new(1, -2, 0, 24),
+        BackgroundTransparency = 1,
+        Text = text,
+        TextColor3 = ACCENT,
+        Font = Enum.Font.GothamBold,
+        TextSize = 13,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextWrapped = true,
+        ZIndex = 4
+    }, page)
+end
+
+local function label(page, text)
+    return make("TextLabel", {
+        Size = UDim2.new(1, -2, 0, 30),
+        BackgroundTransparency = 1,
+        Text = text,
+        TextColor3 = Color3.fromRGB(215, 215, 222),
+        Font = Enum.Font.Gotham,
+        TextSize = 11,
+        TextWrapped = true,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 4
+    }, page)
+end
+
+local function button(page, text, callback)
+    local b = make("TextButton", {
+        Size = UDim2.new(1, -2, 0, 33),
+        BackgroundColor3 = Color3.fromRGB(43, 44, 53),
+        BorderSizePixel = 0,
+        Text = text,
+        TextColor3 = Color3.fromRGB(245, 245, 245),
+        Font = Enum.Font.GothamSemibold,
+        TextSize = 11,
+        AutoButtonColor = false,
+        ZIndex = 4
+    }, page)
+
+    round(b, 7)
+
+    b.MouseEnter:Connect(function()
+        tween(b, 0.12, {BackgroundColor3 = ACCENT})
+    end)
+
+    b.MouseLeave:Connect(function()
+        tween(b, 0.12, {
+            BackgroundColor3 = Color3.fromRGB(43, 44, 53)
+        })
+    end)
+
+    b.Activated:Connect(function()
+        if callback then
+            local ok, err = pcall(callback)
+            if not ok then
+                warn("[LizaHub] " .. tostring(err))
+            end
+        end
+    end)
+
+    return b
+end
+
+local function textBox(page, placeholder, initialText, callback)
+    local box = make("TextBox", {
+        Size = UDim2.new(1, -2, 0, 33),
+        BackgroundColor3 = Color3.fromRGB(39, 40, 49),
+        BorderSizePixel = 0,
+        Text = initialText or "",
+        PlaceholderText = placeholder,
+        PlaceholderColor3 = Color3.fromRGB(145, 145, 155),
+        TextColor3 = Color3.new(1, 1, 1),
+        Font = Enum.Font.Gotham,
+        TextSize = 11,
+        ClearTextOnFocus = false,
+        ZIndex = 4
+    }, page)
+
+    round(box, 7)
+
+    box.FocusLost:Connect(function()
+        if callback then
+            callback(box.Text)
+        end
+    end)
+
+    return box
+end
+
+local function slider(page, sliderName, minValue, maxValue, initialValue, callback)
+    local holder = make("Frame", {
+        Size = UDim2.new(1, -2, 0, 48),
+        BackgroundTransparency = 1,
+        ZIndex = 4
+    }, page)
+
+    local value = initialValue
+
+    make("TextLabel", {
+        Size = UDim2.new(1, -55, 0, 20),
+        BackgroundTransparency = 1,
+        Text = sliderName,
+        TextColor3 = Color3.fromRGB(230, 230, 235),
+        Font = Enum.Font.Gotham,
+        TextSize = 11,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 4
+    }, holder)
+
+    local valueLabel = make("TextLabel", {
+        Position = UDim2.new(1, -50, 0, 0),
+        Size = UDim2.fromOffset(50, 20),
+        BackgroundTransparency = 1,
+        Text = tostring(value),
+        TextColor3 = ACCENT,
+        Font = Enum.Font.GothamBold,
+        TextSize = 11,
+        TextXAlignment = Enum.TextXAlignment.Right,
+        ZIndex = 4
+    }, holder)
+
+    local track = make("TextButton", {
+        Position = UDim2.fromOffset(0, 29),
+        Size = UDim2.new(1, 0, 0, 8),
+        BackgroundColor3 = Color3.fromRGB(57, 58, 68),
+        BorderSizePixel = 0,
+        Text = "",
+        AutoButtonColor = false,
+        ZIndex = 4
+    }, holder)
+    round(track, 5)
+
+    local fill = make("Frame", {
+        Size = UDim2.new(
+            (value - minValue) / (maxValue - minValue), 0, 1, 0
+        ),
+        BackgroundColor3 = ACCENT,
+        BorderSizePixel = 0,
+        ZIndex = 5
+    }, track)
+    round(fill, 5)
+
+    local dragging = false
+
+    local function setFromX(x)
+        local width = math.max(track.AbsoluteSize.X, 1)
+        local alpha = math.clamp(
+            (x - track.AbsolutePosition.X) / width, 0, 1
+        )
+
+        value = math.floor(minValue + (maxValue - minValue) * alpha)
+        valueLabel.Text = tostring(value)
+        fill.Size = UDim2.new(alpha, 0, 1, 0)
+
+        if callback then callback(value) end
+    end
+
+    track.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            setFromX(input.Position.X)
+        end
+    end)
+
+    UIS.InputChanged:Connect(function(input)
+        if dragging and (
+            input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch
+        ) then
+            setFromX(input.Position.X)
+        end
+    end)
+
+    UIS.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
     end)
 end
 
-make("UIListLayout", {
-    Padding = UDim.new(0, 6),
-    SortOrder = Enum.SortOrder.LayoutOrder
-}, sidebar)
+--==================================================
+-- TABS
+--==================================================
 
-local playerPage = pages.Player
-local movementPage = pages.Movement
-local itemsPage = pages.Items
-local funPage = pages.Fun
-local buildingPage = pages.Building
-local settingsPage = pages.Settings
+local playerPage = createTab("Player", 1)
+local movementPage = createTab("Movement", 2)
+local itemsPage = createTab("Items", 3)
+local funPage = createTab("Fun", 4)
+local buildingPage = createTab("Building", 5)
+local settingsPage = createTab("Settings", 6)
 
+--==================================================
 -- PLAYER
+--==================================================
 
-label(playerPage, "CHARACTER")
-button(playerPage, "Heal Character", function()
-    local h = getHumanoid()
-    if h then h.Health = h.MaxHealth end
+section(playerPage, "CHARACTER TEST CONTROLS")
+label(playerPage, "These controls affect your character in your own test experience.")
+
+slider(playerPage, "WalkSpeed", 0, 100, 16, function(value)
+    local hum = getHumanoid()
+    if hum then hum.WalkSpeed = value end
 end)
 
-button(playerPage, "Reset Character", function()
-    local h = getHumanoid()
-    if h then h.Health = 0 end
-end)
-
-button(playerPage, "WalkSpeed +10", function()
-    local h = getHumanoid()
-    if h then h.WalkSpeed = math.clamp(h.WalkSpeed + 10, 0, 200) end
-end)
-
-button(playerPage, "JumpPower +10", function()
-    local h = getHumanoid()
-    if h then
-        h.UseJumpPower = true
-        h.JumpPower = math.clamp(h.JumpPower + 10, 0, 200)
+slider(playerPage, "JumpPower", 0, 150, 50, function(value)
+    local hum = getHumanoid()
+    if hum then
+        hum.UseJumpPower = true
+        hum.JumpPower = value
     end
 end)
 
--- MOVEMENT
+button(playerPage, "Heal Character", function()
+    local hum = getHumanoid()
+    if hum then hum.Health = hum.MaxHealth end
+end)
 
-label(movementPage, "MOVEMENT")
-button(movementPage, "Toggle Fly", function()
-    flying = not flying
+button(playerPage, "Reset Character", function()
+    local hum = getHumanoid()
+    if hum then hum.Health = 0 end
+end)
+
+--==================================================
+-- MOVEMENT / FLIGHT
+--==================================================
+
+section(movementPage, "FLIGHT")
+label(movementPage, "PC: WASD + Space/Ctrl. Mobile: joystick + UP/DOWN.")
+
+local flying = false
+local flySpeed = 60
+local flyConnection
+local bodyVelocity
+local bodyGyro
+local verticalDirection = 0
+
+local mobileFlyFrame = make("Frame", {
+    Name = "MobileFlyControls",
+    AnchorPoint = Vector2.new(1, 1),
+    Position = UDim2.new(1, -18, 1, -115),
+    Size = UDim2.fromOffset(118, 48),
+    BackgroundTransparency = 1,
+    Visible = false,
+    ZIndex = 20
+}, gui)
+
+local function mobileFlyButton(text, x)
+    local b = make("TextButton", {
+        Position = UDim2.fromOffset(x, 0),
+        Size = UDim2.fromOffset(55, 42),
+        BackgroundColor3 = ACCENT,
+        BorderSizePixel = 0,
+        Text = text,
+        TextColor3 = Color3.new(1, 1, 1),
+        Font = Enum.Font.GothamBold,
+        TextSize = 12,
+        ZIndex = 21
+    }, mobileFlyFrame)
+    round(b, 8)
+    return b
+end
+
+local mobileUp = mobileFlyButton("UP", 0)
+local mobileDown = mobileFlyButton("DOWN", 61)
+
+local function connectVerticalButton(buttonObject, direction)
+    buttonObject.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch
+            or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            verticalDirection = direction
+        end
+    end)
+end
+
+connectVerticalButton(mobileUp, 1)
+connectVerticalButton(mobileDown, -1)
+
+UIS.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Touch
+        or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        verticalDirection = 0
+    end
+end)
+
+local function stopFly()
+    flying = false
+    verticalDirection = 0
+    mobileFlyFrame.Visible = false
 
     if flyConnection then
         flyConnection:Disconnect()
         flyConnection = nil
     end
 
-    local root = getRoot()
-    if not flying or not root then
-        local h = getHumanoid()
-        if h then h.PlatformStand = false end
+    if bodyVelocity then
+        bodyVelocity:Destroy()
+        bodyVelocity = nil
+    end
+
+    if bodyGyro then
+        bodyGyro:Destroy()
+        bodyGyro = nil
+    end
+end
+
+local function startFly()
+    if flying then
+        stopFly()
         return
     end
 
+    local root = getRoot()
+    local hum = getHumanoid()
+    if not root or not hum then return end
+
+    flying = true
+    mobileFlyFrame.Visible = UIS.TouchEnabled
+
+    bodyVelocity = Instance.new("BodyVelocity")
+    bodyVelocity.Name = "LizaHubFlyVelocity"
+    bodyVelocity.MaxForce = Vector3.new(1e7, 1e7, 1e7)
+    bodyVelocity.P = 1e4
+    bodyVelocity.Velocity = Vector3.zero
+    bodyVelocity.Parent = root
+
+    bodyGyro = Instance.new("BodyGyro")
+    bodyGyro.Name = "LizaHubFlyGyro"
+    bodyGyro.MaxTorque = Vector3.new(1e7, 1e7, 1e7)
+    bodyGyro.P = 1e4
+    bodyGyro.CFrame = root.CFrame
+    bodyGyro.Parent = root
+
     flyConnection = RunService.RenderStepped:Connect(function()
-        local r = getRoot()
+        local currentRoot = getRoot()
         local camera = workspace.CurrentCamera
-        if not flying or not r or not camera then return end
+
+        if not flying or not currentRoot or not camera
+            or not bodyVelocity or not bodyGyro then
+            stopFly()
+            return
+        end
 
         local direction = Vector3.zero
 
-        if UIS:IsKeyDown(Enum.KeyCode.W) then
-            direction += camera.CFrame.LookVector
-        end
-        if UIS:IsKeyDown(Enum.KeyCode.S) then
-            direction -= camera.CFrame.LookVector
-        end
-        if UIS:IsKeyDown(Enum.KeyCode.A) then
-            direction -= camera.CFrame.RightVector
-        end
-        if UIS:IsKeyDown(Enum.KeyCode.D) then
-            direction += camera.CFrame.RightVector
-        end
-        if UIS:IsKeyDown(Enum.KeyCode.Space) then
-            direction += Vector3.yAxis
-        end
-        if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then
-            direction -= Vector3.yAxis
+        if UIS.TouchEnabled then
+            local currentHumanoid = getHumanoid()
+            if currentHumanoid then
+                direction += currentHumanoid.MoveDirection
+            end
+        else
+            if UIS:IsKeyDown(Enum.KeyCode.W) then
+                direction += camera.CFrame.LookVector
+            end
+            if UIS:IsKeyDown(Enum.KeyCode.S) then
+                direction -= camera.CFrame.LookVector
+            end
+            if UIS:IsKeyDown(Enum.KeyCode.A) then
+                direction -= camera.CFrame.RightVector
+            end
+            if UIS:IsKeyDown(Enum.KeyCode.D) then
+                direction += camera.CFrame.RightVector
+            end
         end
 
-        r.AssemblyLinearVelocity =
-            direction.Magnitude > 0 and direction.Unit * flySpeed
-            or Vector3.zero
+        local up = UIS:IsKeyDown(Enum.KeyCode.Space) and 1 or 0
+        local down = UIS:IsKeyDown(Enum.KeyCode.LeftControl) and 1 or 0
+
+        direction += Vector3.new(
+            0, up - down + verticalDirection, 0
+        )
+
+        if direction.Magnitude > 0 then
+            direction = direction.Unit
+        end
+
+        bodyVelocity.Velocity = direction * flySpeed
+        bodyGyro.CFrame = camera.CFrame
     end)
+end
+
+button(movementPage, "Toggle Fly", startFly)
+button(movementPage, "Stop Fly", stopFly)
+slider(movementPage, "Fly Speed", 10, 200, 60, function(value)
+    flySpeed = value
 end)
 
-button(movementPage, "Fly Speed +20", function()
-    flySpeed = math.clamp(flySpeed + 20, 20, 200)
-end)
+--==================================================
+-- OBJECTS: PLACE / TELEPORT / THROW
+--==================================================
 
-button(movementPage, "Fly Speed -20", function()
-    flySpeed = math.clamp(flySpeed - 20, 20, 200)
-end)
+section(itemsPage, "OBJECT CREATOR")
+label(itemsPage, "Choose a shape and action. Each action has its own button.")
 
--- ITEMS / LOCAL TOOLS
-
-label(itemsPage, "OBJECT CREATOR")
-label(itemsPage, "Shape: " .. shape)
-
-button(itemsPage, "Cycle Shape", function()
-    if shape == "Block" then
-        shape = "Sphere"
-    elseif shape == "Sphere" then
-        shape = "Circle"
-    else
-        shape = "Block"
-    end
-end)
+local objectShape = "Block"
+local customObjects = {}
+local objectMode = "Place"
 
 local function getTargetPosition()
     local camera = workspace.CurrentCamera
     if not camera then return nil end
 
-    local mouse = UIS:GetMouseLocation()
-    local ray = camera:ViewportPointToRay(mouse.X, mouse.Y)
+    local mousePosition = UIS:GetMouseLocation()
+    local ray = camera:ViewportPointToRay(
+        mousePosition.X, mousePosition.Y
+    )
 
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
-    params.FilterDescendantsInstances = getCharacter()
-        and {getCharacter()} or {}
+
+    local character = getCharacter()
+    params.FilterDescendantsInstances = character and {character} or {}
 
     local result = workspace:Raycast(
         ray.Origin, ray.Direction * 500, params
     )
 
-    if result then return result.Position end
+    if result then
+        return result.Position
+    end
+
     return ray.Origin + ray.Direction * 40
 end
 
@@ -364,76 +740,65 @@ local function makeObjectPart(name, position, anchored)
     local part = Instance.new("Part")
     part.Name = name
     part.Size =
-        shape == "Sphere" and Vector3.new(2, 2, 2)
-        or shape == "Circle" and Vector3.new(3, 0.45, 3)
+        objectShape == "Sphere" and Vector3.new(2, 2, 2)
+        or objectShape == "Circle" and Vector3.new(3, 0.45, 3)
         or Vector3.new(2.5, 2.5, 2.5)
+
     part.Shape =
-        shape == "Sphere" and Enum.PartType.Ball
-        or shape == "Circle" and Enum.PartType.Cylinder
+        objectShape == "Sphere" and Enum.PartType.Ball
+        or objectShape == "Circle" and Enum.PartType.Cylinder
         or Enum.PartType.Block
+
     part.Material = Enum.Material.SmoothPlastic
     part.Color = ACCENT
     part.Anchored = anchored
     part.CanCollide = true
     part.Position = position
+
     return part
 end
 
-local function trackObject(obj)
-    table.insert(customObjects, obj)
-    return obj
+local function trackObject(object)
+    table.insert(customObjects, object)
+    return object
 end
 
-local modeButton = button(itemsPage, "Tool Mode: PLACE ▼", function()
-    modeMenu.Visible = not modeMenu.Visible
+button(itemsPage, "Shape: Block / Sphere / Circle", function()
+    if objectShape == "Block" then
+        objectShape = "Sphere"
+    elseif objectShape == "Sphere" then
+        objectShape = "Circle"
+    else
+        objectShape = "Block"
+    end
+    label(itemsPage, "Current shape: " .. objectShape)
 end)
 
-local modeMenu = make("Frame", {
-    Size = UDim2.new(1, -2, 0, 120),
-    BackgroundColor3 = Color3.fromRGB(35, 36, 44),
-    BorderSizePixel = 0,
-    Visible = false
-}, itemsPage)
-corner(modeMenu, 7)
+button(itemsPage, "Mode: Place", function()
+    objectMode = "Place"
+end)
 
-make("UIListLayout", {
-    Padding = UDim.new(0, 4),
-    SortOrder = Enum.SortOrder.LayoutOrder
-}, modeMenu)
+button(itemsPage, "Mode: Teleport", function()
+    objectMode = "Teleport"
+end)
 
-local function setMode(mode)
-    selectedMode = mode
-    modeButton.Text = "Tool Mode: " .. string.upper(mode) .. " ▼"
-    modeMenu.Visible = false
-end
+button(itemsPage, "Mode: Throw", function()
+    objectMode = "Throw"
+end)
 
-for _, mode in ipairs({"TP", "Throw", "Place"}) do
-    button(modeMenu, mode, function()
-        setMode(mode)
-    end)
-end
-
-label(itemsPage, "Tool Name — (LizaHub) is appended automatically")
-local toolNameBox = textBox(itemsPage, "My Tool", "My Tool")
-
-local function finalToolName()
-    local name = toolNameBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
-    name = name:gsub("%s*%(LizaHub%)%s*$", "")
-    if name == "" then name = "LizaHub Tool" end
-    return name .. " (LizaHub)"
-end
-
-local function runMode(mode)
+button(itemsPage, "Run Selected Mode", function()
     local root = getRoot()
-    local target = getTargetPosition()
-    if not root or not target then return end
+    if not root then return end
 
-    if mode == "TP" then
+    local target = getTargetPosition()
+    if not target then return end
+
+    if objectMode == "Teleport" then
         root.CFrame = CFrame.new(target + Vector3.new(0, 3, 0))
         return
     end
 
-    if mode == "Place" then
+    if objectMode == "Place" then
         local part = makeObjectPart(
             "LizaHubCustomObject",
             target + Vector3.new(0, 1.5, 0),
@@ -444,7 +809,7 @@ local function runMode(mode)
         return
     end
 
-    if mode == "Throw" then
+    if objectMode == "Throw" then
         local spawnPosition =
             root.Position + root.CFrame.LookVector * 4
             + Vector3.new(0, 2, 0)
@@ -463,84 +828,62 @@ local function runMode(mode)
 
         trackObject(part)
     end
-end
-
-button(itemsPage, "Run Selected Mode", function()
-    runMode(selectedMode)
-end)
-
-button(itemsPage, "Give Tool", function()
-    local backpack = player:FindFirstChildOfClass("Backpack")
-    if not backpack then return end
-
-    local tool = Instance.new("Tool")
-    tool.Name = finalToolName()
-    tool.RequiresHandle = true
-    tool.CanBeDropped = true
-
-    local handle = makeObjectPart("Handle", Vector3.zero, false)
-    handle.Size = Vector3.new(1, 1, 1)
-    handle.CanCollide = false
-    handle.Massless = true
-    handle.Parent = tool
-
-    tool.Activated:Connect(function()
-        runMode(selectedMode)
-    end)
-
-    tool.Parent = backpack
-
-    local h = getHumanoid()
-    if h then h:EquipTool(tool) end
 end)
 
 button(itemsPage, "Delete My Objects", function()
-    for _, obj in ipairs(customObjects) do
-        if obj and obj.Parent then obj:Destroy() end
+    for _, object in ipairs(customObjects) do
+        if object and object.Parent then
+            object:Destroy()
+        end
     end
     table.clear(customObjects)
 end)
 
--- FUN
+-- Create a Tool in Backpack and equip it.
+-- Activating the tool does not throw it automatically.
+local function createHeldTool()
+    local backpack = player:FindFirstChildOfClass("Backpack")
+    if not backpack then return end
 
-label(funPage, "VISUAL EFFECTS")
-button(funPage, "Toggle Orange Lighting", function()
-    local effect = Lighting:FindFirstChild("LizaHubOrangeTint")
-    if effect then
-        effect:Destroy()
-    else
-        effect = Instance.new("ColorCorrectionEffect")
-        effect.Name = "LizaHubOrangeTint"
-        effect.TintColor = Color3.fromRGB(255, 205, 165)
-        effect.Saturation = 0.15
-        effect.Parent = Lighting
+    local tool = Instance.new("Tool")
+    tool.Name = "LizaHub " .. objectShape
+    tool.RequiresHandle = true
+    tool.CanBeDropped = true
+
+    local handle = makeObjectPart("Handle", Vector3.zero, false)
+    handle.Size =
+        objectShape == "Sphere" and Vector3.new(1.1, 1.1, 1.1)
+        or objectShape == "Circle" and Vector3.new(1.2, 0.22, 1.2)
+        or Vector3.new(0.9, 0.9, 0.9)
+
+    handle.CanCollide = false
+    handle.Massless = true
+    handle.Parent = tool
+
+    tool.Parent = backpack
+
+    local hum = getHumanoid()
+    if hum then
+        hum:EquipTool(tool)
     end
-end)
+end
 
-button(funPage, "Toggle Bloom", function()
-    local effect = Lighting:FindFirstChild("LizaHubBloom")
-    if effect then
-        effect:Destroy()
-    else
-        effect = Instance.new("BloomEffect")
-        effect.Name = "LizaHubBloom"
-        effect.Intensity = 0.8
-        effect.Size = 24
-        effect.Threshold = 1
-        effect.Parent = Lighting
-    end
-end)
+button(itemsPage, "Create Held Tool", createHeldTool)
 
-button(funPage, "Remove LizaHub Effects", function()
-    for _, name in ipairs({"LizaHubOrangeTint", "LizaHubBloom"}) do
-        local effect = Lighting:FindFirstChild(name)
-        if effect then effect:Destroy() end
-    end
-end)
+--==================================================
+-- BUILDING / RGB OBJECTS
+--==================================================
 
--- BUILDING
+section(buildingPage, "BUILD OBJECTS")
 
-label(buildingPage, "BUILD OBJECTS")
+local rgbEnabled = false
+local rgbConnection
+local rgbObjects = {}
+
+local function registerRGB(object)
+    rgbObjects[object] = true
+end
+
 button(buildingPage, "Create Neon Orb", function()
     local root = getRoot()
     if not root then return end
@@ -551,10 +894,22 @@ button(buildingPage, "Create Neon Orb", function()
     orb.Size = Vector3.new(2, 2, 2)
     orb.Material = Enum.Material.Neon
     orb.Color = ACCENT
-    orb.Anchored = false
     orb.CanCollide = false
+    orb.Anchored = false
     orb.CFrame = root.CFrame * CFrame.new(0, 3, -4)
     orb.Parent = workspace
+
+    local light = Instance.new("PointLight")
+    light.Color = ACCENT
+    light.Brightness = 2
+    light.Range = 12
+    light.Parent = orb
+
+    local force = Instance.new("BodyForce")
+    force.Force = Vector3.new(0, orb:GetMass() * workspace.Gravity, 0)
+    force.Parent = orb
+
+    registerRGB(orb)
     trackObject(orb)
 end)
 
@@ -568,63 +923,588 @@ button(buildingPage, "Create Build Part", function()
     part.Material = Enum.Material.Neon
     part.Color = ACCENT
     part.Anchored = true
+    part.CanCollide = true
     part.CFrame = root.CFrame * CFrame.new(0, 1, -6)
     part.Parent = workspace
+
+    registerRGB(part)
     trackObject(part)
 end)
 
--- SETTINGS
+button(buildingPage, "Toggle RGB", function()
+    rgbEnabled = not rgbEnabled
 
-label(settingsPage, "APPEARANCE")
-button(settingsPage, "Orange Accent", function()
-    ACCENT = Color3.fromRGB(255, 132, 35)
+    if rgbConnection then
+        rgbConnection:Disconnect()
+        rgbConnection = nil
+    end
+
+    if rgbEnabled then
+        rgbConnection = RunService.Heartbeat:Connect(function()
+            local color = Color3.fromHSV((os.clock() * 0.25) % 1, 1, 1)
+
+            for object in pairs(rgbObjects) do
+                if object and object.Parent then
+                    object.Color = color
+                    local light = object:FindFirstChildOfClass("PointLight")
+                    if light then light.Color = color end
+                else
+                    rgbObjects[object] = nil
+                end
+            end
+        end)
+    else
+        for object in pairs(rgbObjects) do
+            if object and object.Parent then
+                object.Color = ACCENT
+                local light = object:FindFirstChildOfClass("PointLight")
+                if light then light.Color = ACCENT end
+            end
+        end
+    end
 end)
 
-button(settingsPage, "Red Accent", function()
-    ACCENT = Color3.fromRGB(255, 45, 65)
+button(buildingPage, "Remove My Build Objects", function()
+    for _, object in ipairs(customObjects) do
+        if object and object.Parent then
+            object:Destroy()
+        end
+    end
+
+    for object in pairs(rgbObjects) do
+        if object and object.Parent then
+            if object.Name == "LizaHubNeonOrb"
+                or object.Name == "LizaHubBuildPart" then
+                object:Destroy()
+            end
+        end
+        rgbObjects[object] = nil
+    end
+
+    table.clear(customObjects)
+end)
+
+--==================================================
+-- FUN / VISUAL EFFECTS
+--==================================================
+
+section(funPage, "VISUAL EFFECTS")
+
+button(funPage, "Create Sparkles", function()
+    local root = getRoot()
+    if not root then return end
+
+    local old = root:FindFirstChild("LizaHubSparkles")
+    if old then old:Destroy() end
+
+    local particles = Instance.new("ParticleEmitter")
+    particles.Name = "LizaHubSparkles"
+    particles.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+    particles.Color = ColorSequence.new(ACCENT)
+    particles.Rate = 18
+    particles.Lifetime = NumberRange.new(1, 2)
+    particles.Speed = NumberRange.new(1, 3)
+    particles.SpreadAngle = Vector2.new(180, 180)
+    particles.Parent = root
+end)
+
+button(funPage, "Remove Sparkles", function()
+    local character = getCharacter()
+    if not character then return end
+
+    for _, object in ipairs(character:GetDescendants()) do
+        if object.Name == "LizaHubSparkles" then
+            object:Destroy()
+        end
+    end
+end)
+
+button(funPage, "Toggle Orange Lighting", function()
+    local effect = Lighting:FindFirstChild("LizaHubOrangeTint")
+
+    if effect then
+        effect:Destroy()
+    else
+        effect = Instance.new("ColorCorrectionEffect")
+        effect.Name = "LizaHubOrangeTint"
+        effect.TintColor = Color3.fromRGB(255, 205, 165)
+        effect.Saturation = 0.15
+        effect.Parent = Lighting
+    end
+end)
+
+button(funPage, "Toggle Bloom", function()
+    local effect = Lighting:FindFirstChild("LizaHubBloom")
+
+    if effect then
+        effect:Destroy()
+    else
+        effect = Instance.new("BloomEffect")
+        effect.Name = "LizaHubBloom"
+        effect.Intensity = 0.8
+        effect.Size = 24
+        effect.Threshold = 1
+        effect.Parent = Lighting
+    end
+end)
+
+button(funPage, "Remove LizaHub Lighting", function()
+    for _, name in ipairs({"LizaHubOrangeTint", "LizaHubBloom"}) do
+        local effect = Lighting:FindFirstChild(name)
+        if effect then effect:Destroy() end
+    end
+end)
+
+--==================================================
+-- SETTINGS / ACCENT / BACKGROUND / SCALE
+--==================================================
+
+section(settingsPage, "MENU APPEARANCE")
+
+local titleBox = textBox(
+    settingsPage, "Menu title", HUB_NAME, function(value)
+        if value:gsub("%s", "") ~= "" then
+            HUB_NAME = value
+            titleLabel.Text = HUB_NAME
+        end
+    end
+)
+
+local function updateAccent(color)
+    ACCENT = color
+    titleLabel.TextColor3 = color
+    mainStroke.Color = color
+    continueButton.BackgroundColor3 = color
+
+    for tabName, tabButton in pairs(tabButtons) do
+        if tabName == currentTab then
+            tabButton.BackgroundColor3 = color
+        end
+    end
+
+    for _, object in ipairs(gui:GetDescendants()) do
+        if object:IsA("ScrollingFrame") then
+            object.ScrollBarImageColor3 = color
+        elseif object:IsA("TextLabel") and object.TextColor3 == Color3.fromRGB(255, 132, 35) then
+            object.TextColor3 = color
+        elseif object:IsA("Frame") and object.Name == "Fill" then
+            object.BackgroundColor3 = color
+        end
+    end
+
+    for object in pairs(rgbObjects) do
+        if object and object.Parent and not rgbEnabled then
+            object.Color = color
+            local light = object:FindFirstChildOfClass("PointLight")
+            if light then light.Color = color end
+        end
+    end
+end
+
+local paletteHue, paletteSat, paletteVal = 0.075, 0.86, 1
+local paletteDragging = false
+local hueDragging = false
+
+section(settingsPage, "COLOR PALETTE")
+
+local palette = make("TextButton", {
+    Name = "RGBPalette",
+    Size = UDim2.new(1, -2, 0, 105),
+    BackgroundColor3 = Color3.fromHSV(paletteHue, 1, 1),
+    BorderSizePixel = 0,
+    Text = "",
+    AutoButtonColor = false,
+    ClipsDescendants = true,
+    ZIndex = 4
+}, settingsPage)
+round(palette, 7)
+
+local whiteOverlay = make("Frame", {
+    Size = UDim2.fromScale(1, 1),
+    BackgroundColor3 = Color3.new(1, 1, 1),
+    BorderSizePixel = 0,
+    ZIndex = 5
+}, palette)
+
+make("UIGradient", {
+    Color = ColorSequence.new(Color3.new(1, 1, 1)),
+    Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0),
+        NumberSequenceKeypoint.new(1, 1)
+    })
+}, whiteOverlay)
+
+local blackOverlay = make("Frame", {
+    Size = UDim2.fromScale(1, 1),
+    BackgroundColor3 = Color3.new(0, 0, 0),
+    BorderSizePixel = 0,
+    ZIndex = 6
+}, palette)
+
+make("UIGradient", {
+    Rotation = 90,
+    Color = ColorSequence.new(Color3.new(0, 0, 0)),
+    Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 1),
+        NumberSequenceKeypoint.new(1, 0)
+    })
+}, blackOverlay)
+
+local paletteCursor = make("Frame", {
+    Name = "PaletteCursor",
+    Size = UDim2.fromOffset(12, 12),
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.fromScale(paletteSat, 1 - paletteVal),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    ZIndex = 7
+}, palette)
+round(paletteCursor, 6)
+outline(paletteCursor, Color3.new(1, 1, 1), 2)
+
+local hueBar = make("TextButton", {
+    Name = "HueBar",
+    Size = UDim2.new(1, -2, 0, 17),
+    BackgroundColor3 = Color3.new(1, 1, 1),
+    BorderSizePixel = 0,
+    Text = "",
+    AutoButtonColor = false,
+    ZIndex = 4
+}, settingsPage)
+round(hueBar, 6)
+
+make("UIGradient", {
+    Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 0, 0)),
+        ColorSequenceKeypoint.new(0.17, Color3.fromRGB(255, 255, 0)),
+        ColorSequenceKeypoint.new(0.33, Color3.fromRGB(0, 255, 0)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 255, 255)),
+        ColorSequenceKeypoint.new(0.67, Color3.fromRGB(0, 0, 255)),
+        ColorSequenceKeypoint.new(0.83, Color3.fromRGB(255, 0, 255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 0, 0))
+    })
+}, hueBar)
+
+local colorPreview = make("Frame", {
+    Size = UDim2.new(1, -2, 0, 25),
+    BackgroundColor3 = ACCENT,
+    BorderSizePixel = 0,
+    ZIndex = 4
+}, settingsPage)
+round(colorPreview, 7)
+
+local function applyPalette()
+    local color = Color3.fromHSV(paletteHue, paletteSat, paletteVal)
+    palette.BackgroundColor3 = Color3.fromHSV(paletteHue, 1, 1)
+    paletteCursor.Position = UDim2.fromScale(paletteSat, 1 - paletteVal)
+    colorPreview.BackgroundColor3 = color
+    updateAccent(color)
+end
+
+local function setPalettePosition(x, y, hueOnly)
+    if hueOnly then
+        paletteHue = math.clamp(
+            (x - hueBar.AbsolutePosition.X)
+            / math.max(hueBar.AbsoluteSize.X, 1), 0, 1
+        )
+    else
+        paletteSat = math.clamp(
+            (x - palette.AbsolutePosition.X)
+            / math.max(palette.AbsoluteSize.X, 1), 0, 1
+        )
+        paletteVal = 1 - math.clamp(
+            (y - palette.AbsolutePosition.Y)
+            / math.max(palette.AbsoluteSize.Y, 1), 0, 1
+        )
+    end
+    applyPalette()
+end
+
+palette.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        paletteDragging = true
+        hueDragging = false
+        setPalettePosition(input.Position.X, input.Position.Y, false)
+    end
+end)
+
+hueBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        paletteDragging = true
+        hueDragging = true
+        setPalettePosition(input.Position.X, input.Position.Y, true)
+    end
+end)
+
+UIS.InputChanged:Connect(function(input)
+    if paletteDragging and (
+        input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch
+    ) then
+        setPalettePosition(input.Position.X, input.Position.Y, hueDragging)
+    end
+end)
+
+UIS.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        paletteDragging = false
+    end
+end)
+
+button(settingsPage, "Apply Color", applyPalette)
+
+button(settingsPage, "Reset Orange", function()
+    paletteHue, paletteSat, paletteVal = 0.075, 0.86, 1
+    applyPalette()
+end)
+
+section(settingsPage, "BACKGROUND IMAGE")
+
+textBox(settingsPage, "Roblox image asset ID", "", function(value)
+    local id = value:match("%d+")
+    if id then
+        BACKGROUND_IMAGE = "rbxassetid://" .. id
+    else
+        BACKGROUND_IMAGE = ""
+    end
+end)
+
+button(settingsPage, "Apply Background Image", function()
+    if BACKGROUND_IMAGE ~= "" then
+        backgroundImage.Image = BACKGROUND_IMAGE
+        backgroundImage.Visible = true
+    end
+end)
+
+button(settingsPage, "Remove Background Image", function()
+    BACKGROUND_IMAGE = ""
+    backgroundImage.Image = ""
 end)
 
 button(settingsPage, "Dark Background", function()
-    BG = Color3.fromRGB(22, 23, 29)
-    main.BackgroundColor3 = BG
+    BACKGROUND = Color3.fromRGB(22, 23, 29)
+    main.BackgroundColor3 = BACKGROUND
 end)
 
 button(settingsPage, "Light Background", function()
-    BG = Color3.fromRGB(48, 49, 58)
-    main.BackgroundColor3 = BG
+    BACKGROUND = Color3.fromRGB(48, 49, 58)
+    main.BackgroundColor3 = BACKGROUND
 end)
 
--- WINDOW CONTROLS
+slider(settingsPage, "Menu Scale %", 60, 120, 100, function(value)
+    MENU_SCALE = value / 100
+    scaleObject.Scale = MENU_SCALE
+end)
 
-local reopen = make("TextButton", {
-    Size = UDim2.fromOffset(42, 42),
-    Position = UDim2.new(0, 12, 0.5, -21),
+--==================================================
+-- SESSION CONFIG MANAGER
+--==================================================
+
+section(settingsPage, "CONFIG MANAGER")
+label(settingsPage, "Configs created here remain available until this session ends.")
+
+local configs = {}
+local selectedConfig = "Default"
+local autoLoadConfig = false
+
+local configNameBox = textBox(
+    settingsPage, "Config name", "MyConfig", function(value)
+        if value:gsub("%s", "") ~= "" then
+            selectedConfig = value
+        end
+    end
+)
+
+local autoLoadButton
+
+local function captureConfig()
+    return {
+        title = HUB_NAME,
+        accent = ACCENT,
+        background = BACKGROUND,
+        backgroundImage = BACKGROUND_IMAGE,
+        scale = MENU_SCALE,
+        selectedTab = selectedTab,
+        autoLoad = autoLoadConfig
+    }
+end
+
+local function applyConfig(config)
+    if not config then return end
+
+    HUB_NAME = config.title or HUB_NAME
+    BACKGROUND = config.background or BACKGROUND
+    BACKGROUND_IMAGE = config.backgroundImage or ""
+    MENU_SCALE = config.scale or MENU_SCALE
+    autoLoadConfig = config.autoLoad or false
+
+    titleLabel.Text = HUB_NAME
+    titleBox.Text = HUB_NAME
+    main.BackgroundColor3 = BACKGROUND
+    scaleObject.Scale = MENU_SCALE
+    backgroundImage.Image = BACKGROUND_IMAGE
+
+    updateAccent(config.accent or ACCENT)
+
+    if config.selectedTab and pages[config.selectedTab] then
+        selectTab(config.selectedTab)
+    end
+
+    if autoLoadButton then
+        autoLoadButton.Text = autoLoadConfig
+            and "Auto Load Config: ON"
+            or "Auto Load Config: OFF"
+    end
+end
+
+button(settingsPage, "Save Config", function()
+    if selectedConfig:gsub("%s", "") == "" then
+        selectedConfig = "MyConfig"
+    end
+
+    configs[selectedConfig] = captureConfig()
+    print("[LizaHub] Saved config:", selectedConfig)
+end)
+
+button(settingsPage, "Load Config", function()
+    local config = configs[selectedConfig]
+    if config then
+        applyConfig(config)
+    else
+        warn("[LizaHub] Config not found:", selectedConfig)
+    end
+end)
+
+button(settingsPage, "Delete Config", function()
+    if selectedConfig ~= "Default" then
+        configs[selectedConfig] = nil
+    end
+end)
+
+autoLoadButton = button(settingsPage, "Auto Load Config: OFF", function()
+    autoLoadConfig = not autoLoadConfig
+    autoLoadButton.Text = autoLoadConfig
+        and "Auto Load Config: ON"
+        or "Auto Load Config: OFF"
+
+    if autoLoadConfig and configs[selectedConfig] then
+        applyConfig(configs[selectedConfig])
+    end
+end)
+
+configs.Default = captureConfig()
+
+--==================================================
+-- WINDOW DRAG / REOPEN / RESPONSIVE SCALE
+--==================================================
+
+local reopenButton = make("TextButton", {
+    Name = "ReopenButton",
+    AnchorPoint = Vector2.new(0, 0.5),
+    Position = UDim2.new(0, 12, 0.5, 0),
+    Size = UDim2.fromOffset(44, 44),
     BackgroundColor3 = Color3.fromRGB(31, 32, 40),
     BorderSizePixel = 0,
     Text = "L",
     TextColor3 = ACCENT,
-    Font = Enum.Font.GothamBold,
     TextSize = 20,
-    Visible = false
+    Font = Enum.Font.GothamBold,
+    Visible = false,
+    ZIndex = 30
 }, gui)
-corner(reopen, 10)
+round(reopenButton, 12)
+outline(reopenButton, ACCENT, 1.5)
+
+local function fitScreen()
+    local camera = workspace.CurrentCamera
+    if not camera then return end
+
+    local viewport = camera.ViewportSize
+    local fit = math.min(
+        (viewport.X - 24) / 570,
+        (viewport.Y - 24) / 430,
+        1
+    )
+
+    scaleObject.Scale = math.max(0.35, fit * MENU_SCALE)
+end
+
+fitScreen()
+
+if workspace.CurrentCamera then
+    workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fitScreen)
+end
+
+local menuOpen = true
 
 local function hideMenu()
-    main.Visible = false
-    reopen.Visible = true
+    if not menuOpen then return end
+    menuOpen = false
+    tween(scaleObject, 0.12, {Scale = scaleObject.Scale * 0.9})
+
+    task.delay(0.13, function()
+        if not menuOpen then
+            main.Visible = false
+            reopenButton.Visible = true
+        end
+    end)
 end
 
 local function showMenu()
+    if menuOpen then return end
+    menuOpen = true
+    reopenButton.Visible = false
     main.Visible = true
-    reopen.Visible = false
+
+    local targetScale = scaleObject.Scale
+    scaleObject.Scale = targetScale * 0.9
+    tween(scaleObject, 0.16, {Scale = targetScale})
 end
 
-close.Activated:Connect(hideMenu)
-reopen.Activated:Connect(showMenu)
+closeButton.Activated:Connect(hideMenu)
+reopenButton.Activated:Connect(showMenu)
+
+local dragging = false
+local dragStart
+local startPosition
+
+header.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPosition = main.Position
+    end
+end)
+
+UIS.InputChanged:Connect(function(input)
+    if dragging and (
+        input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch
+    ) then
+        local delta = input.Position - dragStart
+        main.Position = UDim2.new(
+            startPosition.X.Scale,
+            startPosition.X.Offset + delta.X,
+            startPosition.Y.Scale,
+            startPosition.Y.Offset + delta.Y
+        )
+    end
+end)
+
+UIS.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end)
 
 UIS.InputBegan:Connect(function(input, processed)
     if not processed and input.KeyCode == Enum.KeyCode.RightShift then
-        if main.Visible then
+        if menuOpen then
             hideMenu()
         else
             showMenu()
@@ -632,5 +1512,30 @@ UIS.InputBegan:Connect(function(input, processed)
     end
 end)
 
+--==================================================
+-- STARTUP
+--==================================================
+
+continueButton.Activated:Connect(function()
+    tween(splash, 0.2, {BackgroundTransparency = 1})
+    tween(splashTitle, 0.2, {TextTransparency = 1})
+    tween(disclaimerText, 0.2, {TextTransparency = 1})
+    tween(continueButton, 0.2, {BackgroundTransparency = 1, TextTransparency = 1})
+
+    task.delay(0.22, function()
+        splash:Destroy()
+        main.Visible = true
+        fitScreen()
+
+        if autoLoadConfig and configs[selectedConfig] then
+            applyConfig(configs[selectedConfig])
+        end
+    end)
+end)
+
+player.CharacterAdded:Connect(function()
+    stopFly()
+end)
+
 selectTab("Player")
-print("LizaHub v5.5 loaded")
+print("LizaHub v5.0 loaded")
