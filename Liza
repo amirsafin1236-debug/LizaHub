@@ -1,0 +1,1119 @@
+
+--// LizaHub v3.0 | ORANGE EDITION
+--// LocalScript -> StarterPlayer -> StarterPlayerScripts
+
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local Lighting = game:GetService("Lighting")
+
+local player = Players.LocalPlayer
+local pg = player:WaitForChild("PlayerGui")
+
+local old = pg:FindFirstChild("LizaHub")
+if old then old:Destroy() end
+
+local ORANGE = Color3.fromRGB(255, 125, 30)
+local BG = Color3.fromRGB(30, 21, 17)
+local PANEL = Color3.fromRGB(47, 32, 25)
+local WHITE = Color3.fromRGB(248, 242, 238)
+local MUTED = Color3.fromRGB(170, 150, 140)
+
+local accent = ORANGE
+local itemColor = ORANGE
+local menuTitle = "LizaHub"
+local selectedTab = "Player"
+
+local flyOn = false
+local flyingUp, flyingDown = false, false
+local flySpeed = 55
+local speedValue, jumpValue = 32, 100
+local keepSpeed, keepJump = false, false
+local flyConn, statConn
+local bv, bg
+local popupOpen = false
+
+local savedLighting = {
+    Brightness = Lighting.Brightness,
+    ClockTime = Lighting.ClockTime,
+    GlobalShadows = Lighting.GlobalShadows
+}
+
+local function make(class, props, parent)
+    local obj = Instance.new(class)
+    for k, v in pairs(props) do
+        obj[k] = v
+    end
+    obj.Parent = parent
+    return obj
+end
+
+local function round(obj, radius)
+    make("UICorner", {
+        CornerRadius = UDim.new(0, radius or 10)
+    }, obj)
+end
+
+local function outline(obj, color, thickness)
+    return make("UIStroke", {
+        Color = color or accent,
+        Thickness = thickness or 1,
+        Transparency = 0.25
+    }, obj)
+end
+
+local function tween(obj, duration, props, style)
+    local t = TweenService:Create(
+        obj,
+        TweenInfo.new(
+            duration,
+            style or Enum.EasingStyle.Quint,
+            Enum.EasingDirection.Out
+        ),
+        props
+    )
+    t:Play()
+    return t
+end
+
+local function getChar()
+    local ch = player.Character or player.CharacterAdded:Wait()
+    return ch, ch:FindFirstChildOfClass("Humanoid"),
+        ch:FindFirstChild("HumanoidRootPart")
+end
+
+-- GUI
+local gui = make("ScreenGui", {
+    Name = "LizaHub",
+    ResetOnSpawn = false,
+    DisplayOrder = 1000,
+    ZIndexBehavior = Enum.ZIndexBehavior.Global
+}, pg)
+
+local main = make("Frame", {
+    Name = "Main",
+    Size = UDim2.fromOffset(490, 375),
+    Position = UDim2.new(0.5, -245, 0.5, -187),
+    BackgroundColor3 = BG,
+    BorderSizePixel = 0,
+    ClipsDescendants = true
+}, gui)
+
+round(main, 15)
+local mainStroke = outline(main, accent, 1.5)
+
+local mainScale = make("UIScale", {
+    Scale = 0.9
+}, main)
+
+local function fitScreen()
+    local cam = workspace.CurrentCamera
+    if cam then
+        local size = cam.ViewportSize
+        mainScale.Scale = math.clamp(
+            math.min((size.X - 16) / 490, (size.Y - 16) / 375),
+            0.5,
+            1
+        )
+    end
+end
+
+fitScreen()
+if workspace.CurrentCamera then
+    workspace.CurrentCamera:GetPropertyChangedSignal(
+        "ViewportSize"
+    ):Connect(fitScreen)
+end
+
+-- Animated header
+local header = make("Frame", {
+    Size = UDim2.new(1, 0, 0, 48),
+    BackgroundColor3 = PANEL,
+    BorderSizePixel = 0
+}, main)
+
+local accentLine = make("Frame", {
+    Position = UDim2.new(0, 0, 1, -2),
+    Size = UDim2.new(1, 0, 0, 2),
+    BackgroundColor3 = accent,
+    BorderSizePixel = 0
+}, header)
+
+local title = make("TextLabel", {
+    Position = UDim2.fromOffset(15, 0),
+    Size = UDim2.new(1, -100, 1, 0),
+    BackgroundTransparency = 1,
+    Text = "✦ " .. menuTitle,
+    TextColor3 = WHITE,
+    TextSize = 21,
+    Font = Enum.Font.GothamBold,
+    TextXAlignment = Enum.TextXAlignment.Left
+}, header)
+
+local close = make("TextButton", {
+    Position = UDim2.new(1, -40, 0, 8),
+    Size = UDim2.fromOffset(30, 30),
+    BackgroundColor3 = accent,
+    Text = "×",
+    TextColor3 = WHITE,
+    TextSize = 22,
+    Font = Enum.Font.GothamBold
+}, header)
+round(close, 9)
+
+local reopen = make("TextButton", {
+    Position = UDim2.new(0, 12, 0.5, 0),
+    Size = UDim2.fromOffset(120, 42),
+    BackgroundColor3 = PANEL,
+    Text = "✦ LizaHub",
+    TextColor3 = WHITE,
+    TextSize = 15,
+    Font = Enum.Font.GothamBold,
+    Visible = false
+}, gui)
+round(reopen, 11)
+outline(reopen, accent)
+
+-- Drag support
+local dragging, dragStart, startPos
+
+header.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1
+    or i.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = i.Position
+        startPos = main.Position
+    end
+end)
+
+UIS.InputChanged:Connect(function(i)
+    if dragging and (
+        i.UserInputType == Enum.UserInputType.MouseMovement
+        or i.UserInputType == Enum.UserInputType.Touch
+    ) then
+        local d = i.Position - dragStart
+        main.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + d.X,
+            startPos.Y.Scale, startPos.Y.Offset + d.Y
+        )
+    end
+end)
+
+UIS.InputEnded:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1
+    or i.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end)
+
+local function showMenu()
+    main.Visible = true
+    reopen.Visible = false
+    mainScale.Scale = 0.86
+    tween(mainScale, 0.22, {Scale = 1}, Enum.EasingStyle.Back)
+end
+
+local function hideMenu()
+    tween(mainScale, 0.12, {Scale = 0.92})
+    task.delay(0.12, function()
+        main.Visible = false
+        reopen.Visible = true
+    end)
+end
+
+close.Activated:Connect(hideMenu)
+reopen.Activated:Connect(showMenu)
+
+-- Sidebar and content
+local sidebar = make("Frame", {
+    Position = UDim2.fromOffset(9, 56),
+    Size = UDim2.new(0, 124, 1, -65),
+    BackgroundColor3 = PANEL,
+    BorderSizePixel = 0
+}, main)
+round(sidebar, 11)
+
+make("UIPadding", {
+    PaddingTop = UDim.new(0, 8),
+    PaddingLeft = UDim.new(0, 6),
+    PaddingRight = UDim.new(0, 6)
+}, sidebar)
+
+make("UIListLayout", {
+    Padding = UDim.new(0, 6),
+    SortOrder = Enum.SortOrder.LayoutOrder
+}, sidebar)
+
+local content = make("ScrollingFrame", {
+    Position = UDim2.fromOffset(143, 56),
+    Size = UDim2.new(1, -152, 1, -65),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    ScrollBarThickness = 3,
+    ScrollBarImageColor3 = accent,
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    CanvasSize = UDim2.new()
+}, main)
+
+local contentLayout = make("UIListLayout", {
+    Padding = UDim.new(0, 7),
+    SortOrder = Enum.SortOrder.LayoutOrder
+}, content)
+
+make("UIPadding", {
+    PaddingTop = UDim.new(0, 3),
+    PaddingLeft = UDim.new(0, 2),
+    PaddingRight = UDim.new(0, 6),
+    PaddingBottom = UDim.new(0, 8)
+}, content)
+
+local function clearContent()
+    for _, obj in ipairs(content:GetChildren()) do
+        if obj:IsA("GuiObject") and obj ~= contentLayout then
+            obj:Destroy()
+        end
+    end
+end
+
+local function label(text)
+    return make("TextLabel", {
+        Size = UDim2.new(1, 0, 0, 27),
+        BackgroundTransparency = 1,
+        Text = text,
+        TextColor3 = accent,
+        TextSize = 13,
+        Font = Enum.Font.GothamBold,
+        TextXAlignment = Enum.TextXAlignment.Left
+    }, content)
+end
+
+local function button(text, callback)
+    local b = make("TextButton", {
+        Size = UDim2.new(1, 0, 0, 37),
+        BackgroundColor3 = PANEL,
+        Text = text,
+        TextColor3 = WHITE,
+        TextSize = 13,
+        Font = Enum.Font.GothamMedium,
+        TextWrapped = true,
+        AutoButtonColor = false
+    }, content)
+
+    round(b, 9)
+    local s = outline(b, Color3.fromRGB(78, 59, 47))
+
+    b.MouseEnter:Connect(function()
+        tween(b, 0.12, {BackgroundColor3 = Color3.fromRGB(77, 45, 29)})
+        tween(s, 0.12, {Color = accent, Transparency = 0})
+    end)
+
+    b.MouseLeave:Connect(function()
+        tween(b, 0.12, {BackgroundColor3 = PANEL})
+        tween(s, 0.12, {
+            Color = Color3.fromRGB(78, 59, 47),
+            Transparency = 0.25
+        })
+    end)
+
+    b.Activated:Connect(function()
+        tween(b, 0.07, {Size = UDim2.new(1, -3, 0, 34)})
+        task.delay(0.08, function()
+            if b.Parent then
+                tween(b, 0.12, {Size = UDim2.new(1, 0, 0, 37)})
+            end
+        end)
+        callback()
+    end)
+
+    return b
+end
+
+local function textbox(placeholder, default)
+    local t = make("TextBox", {
+        Size = UDim2.new(1, 0, 0, 36),
+        BackgroundColor3 = PANEL,
+        Text = default or "",
+        PlaceholderText = placeholder,
+        TextColor3 = WHITE,
+        PlaceholderColor3 = MUTED,
+        TextSize = 13,
+        Font = Enum.Font.Gotham,
+        ClearTextOnFocus = false
+    }, content)
+    round(t, 9)
+    outline(t, Color3.fromRGB(78, 59, 47))
+    return t
+end
+
+-- Fullscreen color studio, always above other GUI controls
+local overlay = make("Frame", {
+    Name = "ColorStudioOverlay",
+    Size = UDim2.fromScale(1, 1),
+    BackgroundColor3 = Color3.new(0, 0, 0),
+    BackgroundTransparency = 1,
+    Visible = false,
+    Active = true,
+    ZIndex = 100
+}, gui)
+
+local studio = make("Frame", {
+    Name = "ColorStudio",
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.fromScale(0.5, 0.5),
+    Size = UDim2.fromOffset(320, 365),
+    BackgroundColor3 = Color3.fromRGB(32, 25, 21),
+    BorderSizePixel = 0,
+    ZIndex = 110
+}, overlay)
+round(studio, 15)
+local studioStroke = outline(studio, accent, 1.5)
+
+local studioScale = make("UIScale", {Scale = 0.85}, studio)
+
+local studioTitle = make("TextLabel", {
+    Position = UDim2.fromOffset(14, 7),
+    Size = UDim2.new(1, -60, 0, 32),
+    BackgroundTransparency = 1,
+    Text = "🖌  COLOR STUDIO",
+    TextColor3 = accent,
+    TextSize = 16,
+    Font = Enum.Font.GothamBold,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 112
+}, studio)
+
+local studioClose = make("TextButton", {
+    Position = UDim2.new(1, -40, 0, 8),
+    Size = UDim2.fromOffset(30, 29),
+    BackgroundColor3 = PANEL,
+    Text = "×",
+    TextColor3 = WHITE,
+    TextSize = 20,
+    Font = Enum.Font.GothamBold,
+    ZIndex = 120
+}, studio)
+round(studioClose, 8)
+
+local square = make("Frame", {
+    Position = UDim2.fromOffset(15, 45),
+    Size = UDim2.new(1, -30, 0, 170),
+    BackgroundColor3 = Color3.fromHSV(0.07, 1, 1),
+    Active = true,
+    ClipsDescendants = true,
+    ZIndex = 112
+}, studio)
+round(square, 7)
+
+local whiteLayer = make("Frame", {
+    Size = UDim2.fromScale(1, 1),
+    BackgroundColor3 = Color3.new(1, 1, 1),
+    BorderSizePixel = 0,
+    Active = false,
+    ZIndex = 113
+}, square)
+
+make("UIGradient", {
+    Rotation = 0,
+    Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0),
+        NumberSequenceKeypoint.new(1, 1)
+    })
+}, whiteLayer)
+
+local blackLayer = make("Frame", {
+    Size = UDim2.fromScale(1, 1),
+    BackgroundColor3 = Color3.new(0, 0, 0),
+    BorderSizePixel = 0,
+    Active = false,
+    ZIndex = 114
+}, square)
+
+make("UIGradient", {
+    Rotation = 90,
+    Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 1),
+        NumberSequenceKeypoint.new(1, 0)
+    })
+}, blackLayer)
+
+local cursor = make("Frame", {
+    Size = UDim2.fromOffset(14, 14),
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    ZIndex = 116
+}, square)
+round(cursor, 20)
+outline(cursor, Color3.new(1, 1, 1), 2)
+
+local hueBar = make("Frame", {
+    Position = UDim2.fromOffset(15, 224),
+    Size = UDim2.new(1, -30, 0, 20),
+    BackgroundColor3 = Color3.new(1, 1, 1),
+    Active = true,
+    ZIndex = 112
+}, studio)
+round(hueBar, 6)
+
+make("UIGradient", {
+    Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 0, 0)),
+        ColorSequenceKeypoint.new(0.17, Color3.fromRGB(255, 255, 0)),
+        ColorSequenceKeypoint.new(0.33, Color3.fromRGB(0, 255, 0)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 255, 255)),
+        ColorSequenceKeypoint.new(0.67, Color3.fromRGB(0, 0, 255)),
+        ColorSequenceKeypoint.new(0.83, Color3.fromRGB(255, 0, 255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 0, 0))
+    })
+}, hueBar)
+
+local hueMarker = make("Frame", {
+    Size = UDim2.fromOffset(5, 24),
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    BackgroundColor3 = WHITE,
+    BorderSizePixel = 0,
+    ZIndex = 117
+}, hueBar)
+outline(hueMarker, Color3.new(0, 0, 0), 1)
+
+local preview = make("Frame", {
+    Position = UDim2.fromOffset(15, 258),
+    Size = UDim2.fromOffset(40, 36),
+    BackgroundColor3 = accent,
+    ZIndex = 112
+}, studio)
+round(preview, 8)
+outline(preview, WHITE)
+
+local hexLabel = make("TextLabel", {
+    Position = UDim2.fromOffset(63, 259),
+    Size = UDim2.new(1, -75, 0, 34),
+    BackgroundTransparency = 1,
+    Text = "#FF7D1E",
+    TextColor3 = WHITE,
+    TextSize = 16,
+    Font = Enum.Font.GothamBold,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 112
+}, studio)
+
+local function toHex(col)
+    return string.format(
+        "#%02X%02X%02X",
+        math.floor(col.R * 255 + 0.5),
+        math.floor(col.G * 255 + 0.5),
+        math.floor(col.B * 255 + 0.5)
+    )
+end
+
+local h, s, v = Color3.toHSV(accent)
+
+local function updateColor()
+    h = h % 1
+    s = math.clamp(s, 0, 1)
+    v = math.clamp(v, 0, 1)
+
+    local col = Color3.fromHSV(h, s, v)
+    square.BackgroundColor3 = Color3.fromHSV(h, 1, 1)
+    cursor.Position = UDim2.fromScale(s, 1 - v)
+    hueMarker.Position = UDim2.new(h, 0, 0.5, 0)
+    preview.BackgroundColor3 = col
+    hexLabel.Text = toHex(col)
+end
+
+local function setHue(input)
+    local width = hueBar.AbsoluteSize.X
+    if width <= 0 then return end
+    h = math.clamp(
+        (input.Position.X - hueBar.AbsolutePosition.X) / width,
+        0, 1
+    )
+    updateColor()
+end
+
+local function setSquare(input)
+    local size = square.AbsoluteSize
+    if size.X <= 0 or size.Y <= 0 then return end
+    s = math.clamp(
+        (input.Position.X - square.AbsolutePosition.X) / size.X,
+        0, 1
+    )
+    v = 1 - math.clamp(
+        (input.Position.Y - square.AbsolutePosition.Y) / size.Y,
+        0, 1
+    )
+    updateColor()
+end
+
+local draggingHue = false
+local draggingSquare = false
+local activeTouch = nil
+
+local function beginHue(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        draggingHue = true
+        setHue(input)
+    elseif input.UserInputType == Enum.UserInputType.Touch then
+        draggingHue = true
+        activeTouch = input
+        setHue(input)
+    end
+end
+
+local function beginSquare(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        draggingSquare = true
+        setSquare(input)
+    elseif input.UserInputType == Enum.UserInputType.Touch then
+        draggingSquare = true
+        activeTouch = input
+        setSquare(input)
+    end
+end
+
+hueBar.InputBegan:Connect(beginHue)
+square.InputBegan:Connect(beginSquare)
+
+UIS.InputChanged:Connect(function(input)
+    if draggingHue and input.UserInputType == Enum.UserInputType.MouseMovement then
+        setHue(input)
+    elseif draggingSquare and input.UserInputType == Enum.UserInputType.MouseMovement then
+        setSquare(input)
+    elseif input == activeTouch then
+        if draggingHue then setHue(input) end
+        if draggingSquare then setSquare(input) end
+    end
+end)
+
+UIS.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        draggingHue = false
+        draggingSquare = false
+        if input == activeTouch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            activeTouch = nil
+        end
+    end
+end)
+
+local function closeStudio()
+    if not popupOpen then return end
+    popupOpen = false
+
+    tween(studioScale, 0.12, {Scale = 0.88})
+    tween(overlay, 0.15, {BackgroundTransparency = 1})
+
+    task.delay(0.15, function()
+        if not popupOpen then overlay.Visible = false end
+    end)
+end
+
+studioClose.Activated:Connect(closeStudio)
+
+local function openStudio(initial, callback)
+    if popupOpen then return end
+    popupOpen = true
+
+    local targetCallback = callback
+    h, s, v = Color3.toHSV(initial or accent)
+    updateColor()
+
+    -- Recreate apply buttons each time with a clean layout
+    for _, obj in ipairs(studio:GetChildren()) do
+        if obj.Name == "ApplyMenu" or obj.Name == "ApplyItem" then
+            obj:Destroy()
+        end
+    end
+
+    local applyMenu = make("TextButton", {
+        Name = "ApplyMenu",
+        Position = UDim2.fromOffset(15, 307),
+        Size = UDim2.new(0.5, -19, 0, 40),
+        BackgroundColor3 = accent,
+        Text = "Apply",
+        TextColor3 = WHITE,
+        TextSize = 13,
+        Font = Enum.Font.GothamBold,
+        ZIndex = 112
+    }, studio)
+    round(applyMenu, 9)
+
+    local applyItem = make("TextButton", {
+        Name = "ApplyItem",
+        Position = UDim2.new(0.5, 4, 0, 307),
+        Size = UDim2.new(0.5, -19, 0, 40),
+        BackgroundColor3 = PANEL,
+        Text = "Use for item",
+        TextColor3 = WHITE,
+        TextSize = 12,
+        Font = Enum.Font.GothamBold,
+        ZIndex = 112
+    }, studio)
+    round(applyItem, 9)
+    outline(applyItem, accent)
+
+    applyMenu.Activated:Connect(function()
+        local col = Color3.fromHSV(h, s, v)
+        accent = col
+        targetCallback(col, "menu")
+        closeStudio()
+    end)
+
+    applyItem.Activated:Connect(function()
+        local col = Color3.fromHSV(h, s, v)
+        itemColor = col
+        targetCallback(col, "item")
+        closeStudio()
+    end)
+
+    overlay.Visible = true
+    overlay.BackgroundTransparency = 1
+    studioScale.Scale = 0.82
+    tween(overlay, 0.18, {BackgroundTransparency = 0.25})
+    tween(studioScale, 0.25, {Scale = 1}, Enum.EasingStyle.Back)
+end
+
+local function colorButton(text, initial, callback)
+    local b = make("TextButton", {
+        Size = UDim2.new(1, 0, 0, 42),
+        BackgroundColor3 = PANEL,
+        Text = "🖌  " .. text .. "   ■",
+        TextColor3 = WHITE,
+        TextSize = 13,
+        Font = Enum.Font.GothamBold
+    }, content)
+    round(b, 9)
+    local st = outline(b, initial or accent)
+
+    b.Activated:Connect(function()
+        openStudio(initial or accent, function(col, mode)
+            callback(col, mode)
+            st.Color = col
+            tween(b, 0.15, {BackgroundColor3 = Color3.fromRGB(70, 43, 29)})
+            task.delay(0.18, function()
+                if b.Parent then tween(b, 0.15, {BackgroundColor3 = PANEL}) end
+            end)
+        end)
+    end)
+
+    return b
+end
+
+-- Movement
+local mobile = make("Frame", {
+    Name = "FlightControls",
+    Size = UDim2.fromOffset(116, 52),
+    Position = UDim2.new(1, -130, 1, -225),
+    BackgroundTransparency = 1,
+    Visible = false,
+    ZIndex = 50
+}, gui)
+
+local function holdButton(text, x, callback)
+    local b = make("TextButton", {
+        Position = UDim2.fromOffset(x, 0),
+        Size = UDim2.fromOffset(54, 46),
+        BackgroundColor3 = accent,
+        Text = text,
+        TextColor3 = WHITE,
+        TextSize = 13,
+        Font = Enum.Font.GothamBold,
+        ZIndex = 51
+    }, mobile)
+    round(b, 12)
+    outline(b, WHITE)
+
+    local function setDown(state)
+        callback(state)
+        tween(b, 0.08, {
+            BackgroundTransparency = state and 0.25 or 0
+        })
+    end
+
+    b.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.Touch
+        or i.UserInputType == Enum.UserInputType.MouseButton1 then
+            setDown(true)
+        end
+    end)
+
+    b.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.Touch
+        or i.UserInputType == Enum.UserInputType.MouseButton1 then
+            setDown(false)
+        end
+    end)
+end
+
+holdButton("▲ UP", 0, function(v) flyingUp = v end)
+holdButton("▼ DOWN", 60, function(v) flyingDown = v end)
+
+local function stopFly()
+    flyOn = false
+    flyingUp, flyingDown = false, false
+    mobile.Visible = false
+
+    if flyConn then flyConn:Disconnect() flyConn = nil end
+    if bv then bv:Destroy() bv = nil end
+    if bg then bg:Destroy() bg = nil end
+
+    local _, hum = getChar()
+    if hum then hum.PlatformStand = false end
+end
+
+local function startFly()
+    stopFly()
+
+    local _, hum, root = getChar()
+    if not hum or not root then return end
+
+    flyOn = true
+    mobile.Visible = true
+
+    bv = Instance.new("BodyVelocity")
+    bv.Name = "LizaHubFlyVelocity"
+    bv.MaxForce = Vector3.new(1e6, 1e6, 1e6)
+    bv.P = 1e4
+    bv.Velocity = Vector3.zero
+    bv.Parent = root
+
+    bg = Instance.new("BodyGyro")
+    bg.Name = "LizaHubFlyGyro"
+    bg.MaxTorque = Vector3.new(1e6, 1e6, 1e6)
+    bg.P = 1e4
+    bg.Parent = root
+
+    flyConn = RunService.RenderStepped:Connect(function()
+        local _, h, r = getChar()
+        if not flyOn or not h or not r or not bv or not bv.Parent then
+            stopFly()
+            return
+        end
+
+        local cam = workspace.CurrentCamera
+        local move = h.MoveDirection * flySpeed
+        local y = 0
+
+        if flyingUp or UIS:IsKeyDown(Enum.KeyCode.Space) then
+            y = flySpeed
+        elseif flyingDown or UIS:IsKeyDown(Enum.KeyCode.LeftControl) then
+            y = -flySpeed
+        end
+
+        bv.Velocity = Vector3.new(move.X, y, move.Z)
+        bg.CFrame = cam.CFrame
+    end)
+end
+
+local function toggleFly()
+    if flyOn then stopFly() else startFly() end
+end
+
+local function applyStats()
+    local _, hum = getChar()
+    if not hum then return end
+
+    if keepSpeed then hum.WalkSpeed = speedValue end
+    if keepJump then
+        hum.UseJumpPower = true
+        hum.JumpPower = jumpValue
+    end
+end
+
+statConn = RunService.Heartbeat:Connect(function()
+    if keepSpeed or keepJump then applyStats() end
+end)
+
+player.CharacterAdded:Connect(function()
+    task.wait(1)
+    applyStats()
+    if flyOn then stopFly() end
+end)
+
+-- Locally-created tools
+local function makeTool(name, color, isOrb)
+    local backpack = player:FindFirstChildOfClass("Backpack")
+    if not backpack then return end
+
+    local tool = Instance.new("Tool")
+    tool.Name = name
+    tool.RequiresHandle = true
+    tool.CanBeDropped = false
+
+    local handle = Instance.new("Part")
+    handle.Name = "Handle"
+    handle.Size = isOrb and Vector3.new(1.2, 1.2, 1.2)
+        or Vector3.new(1, 1, 1)
+    handle.Shape = isOrb and Enum.PartType.Ball
+        or Enum.PartType.Block
+    handle.Color = color
+    handle.Material = Enum.Material.Neon
+    handle.CanCollide = false
+    handle.Massless = true
+    handle.Parent = tool
+
+    tool.Parent = backpack
+end
+
+local function showTab(name)
+    selectedTab = name
+    clearContent()
+
+    -- Fade content in
+    content.CanvasPosition = Vector2.zero
+    content.Position = UDim2.fromOffset(143, 61)
+    tween(content, 0.18, {
+        Position = UDim2.fromOffset(143, 56)
+    })
+
+    if name == "Player" then
+        label("PLAYER  /  CHARACTER")
+
+        local sp = textbox("WalkSpeed (0–300)", "32")
+        button("Apply Speed", function()
+            local n = tonumber(sp.Text)
+            if n and n >= 0 and n <= 300 then
+                speedValue = n
+                keepSpeed = true
+                applyStats()
+            end
+        end)
+
+        button("Reset Speed", function()
+            speedValue = 16
+            keepSpeed = true
+            applyStats()
+        end)
+
+        local jp = textbox("JumpPower (0–300)", "100")
+        button("Apply Jump", function()
+            local n = tonumber(jp.Text)
+            if n and n >= 0 and n <= 300 then
+                jumpValue = n
+                keepJump = true
+                applyStats()
+            end
+        end)
+
+        button("Reset Jump", function()
+            jumpValue = 50
+            keepJump = true
+            applyStats()
+        end)
+
+        button("Heal Character", function()
+            local _, hum = getChar()
+            if hum then hum.Health = hum.MaxHealth end
+        end)
+
+        button("Reset Character", function()
+            local _, hum = getChar()
+            if hum then hum.Health = 0 end
+        end)
+
+    elseif name == "Movement" then
+        label("MOVEMENT  /  FLIGHT")
+
+        button("Toggle Fly", toggleFly)
+
+        local fs = textbox("Flight speed", "55")
+        button("Apply Flight Speed", function()
+            local n = tonumber(fs.Text)
+            if n and n >= 5 and n <= 250 then
+                flySpeed = n
+            end
+        end)
+
+        label("PHONE: hold UP / DOWN")
+        label("PC: Space up / Ctrl down")
+
+    elseif name == "Items" then
+        label("ITEM CREATOR")
+
+        local itemName = textbox("Item name", "MyTool")
+
+        colorButton("CHOOSE ITEM COLOR", itemColor, function(col)
+            itemColor = col
+        end)
+
+        button("Create Custom Tool", function()
+            local n = itemName.Text
+            if n == "" then n = "MyTool" end
+            makeTool(n, itemColor, false)
+        end)
+
+        button("Create Neon Orb", function()
+            makeTool("Liza Orb", itemColor, true)
+        end)
+
+        label("LOCAL ITEMS — YOUR CLIENT ONLY")
+
+    elseif name == "Fun" then
+        label("FUN  /  EFFECTS")
+
+        button("Day Lighting", function()
+            Lighting.ClockTime = 14
+            Lighting.Brightness = 2
+        end)
+
+        button("Night Lighting", function()
+            Lighting.ClockTime = 0
+            Lighting.Brightness = 1
+        end)
+
+        button("Reset Lighting", function()
+            Lighting.ClockTime = savedLighting.ClockTime
+            Lighting.Brightness = savedLighting.Brightness
+            Lighting.GlobalShadows = savedLighting.GlobalShadows
+        end)
+
+        button("Add Sparkles", function()
+            local _, _, root = getChar()
+            if root and not root:FindFirstChild("LizaSparkles") then
+                local s = Instance.new("Sparkles")
+                s.Name = "LizaSparkles"
+                s.SparkleColor = accent
+                s.Parent = root
+            end
+        end)
+
+        button("Remove Sparkles", function()
+            local _, _, root = getChar()
+            if root and root:FindFirstChild("LizaSparkles") then
+                root.LizaSparkles:Destroy()
+            end
+        end)
+
+    elseif name == "Settings" then
+        label("SETTINGS  /  CUSTOMIZATION")
+
+        local nameBox = textbox("Menu name", menuTitle)
+        button("Apply Menu Name", function()
+            if nameBox.Text ~= "" then
+                menuTitle = nameBox.Text
+                title.Text = "✦ " .. menuTitle
+                reopen.Text = "✦ " .. menuTitle
+            end
+        end)
+
+        colorButton("MENU COLOR", accent, function(col)
+            accent = col
+            mainStroke.Color = col
+            studioStroke.Color = col
+            title.TextColor3 = WHITE
+            accentLine.BackgroundColor3 = col
+            close.BackgroundColor3 = col
+            content.ScrollBarImageColor3 = col
+            studioTitle.TextColor3 = col
+            outline(reopen, col)
+
+            for _, obj in ipairs(sidebar:GetChildren()) do
+                if obj:IsA("TextButton") then
+                    -- Active tab keeps its own accent.
+                    if obj.Name == selectedTab then
+                        obj.BackgroundColor3 = col
+                    end
+                end
+            end
+
+            for _, obj in ipairs(mobile:GetChildren()) do
+                if obj:IsA("TextButton") then
+                    obj.BackgroundColor3 = col
+                end
+            end
+        end)
+
+        button("Background: Dark", function()
+            main.BackgroundColor3 = BG
+            sidebar.BackgroundColor3 = PANEL
+            header.BackgroundColor3 = PANEL
+        end)
+
+        button("Background: Lighter", function()
+            main.BackgroundColor3 = Color3.fromRGB(60, 42, 33)
+            sidebar.BackgroundColor3 = Color3.fromRGB(69, 48, 37)
+            header.BackgroundColor3 = Color3.fromRGB(69, 48, 37)
+        end)
+
+        button("Reset Menu Position", function()
+            tween(main, 0.25, {
+                Position = UDim2.new(0.5, -245, 0.5, -187)
+            }, Enum.EasingStyle.Back)
+        end)
+    end
+end
+
+local tabs = {"Player", "Movement", "Items", "Fun", "Settings"}
+
+for i, name in ipairs(tabs) do
+    local b = make("TextButton", {
+        Name = name,
+        Size = UDim2.new(1, 0, 0, 39),
+        BackgroundColor3 = BG,
+        Text = name,
+        TextColor3 = WHITE,
+        TextSize = 12,
+        Font = Enum.Font.GothamBold,
+        LayoutOrder = i,
+        AutoButtonColor = false
+    }, sidebar)
+
+    round(b, 8)
+
+    b.MouseEnter:Connect(function()
+        if selectedTab ~= name then
+            tween(b, 0.12, {BackgroundColor3 = Color3.fromRGB(67, 43, 31)})
+        end
+    end)
+
+    b.MouseLeave:Connect(function()
+        if selectedTab ~= name then
+            tween(b, 0.12, {BackgroundColor3 = BG})
+        end
+    end)
+
+    b.Activated:Connect(function()
+        selectedTab = name
+
+        for _, other in ipairs(sidebar:GetChildren()) do
+            if other:IsA("TextButton") then
+                tween(other, 0.12, {
+                    BackgroundColor3 = other == b and accent or BG
+                })
+            end
+        end
+
+        showTab(name)
+    end)
+end
+
+UIS.InputBegan:Connect(function(input, processed)
+    if not processed and input.KeyCode == Enum.KeyCode.RightShift then
+        if overlay.Visible then
+            closeStudio()
+        elseif main.Visible then
+            hideMenu()
+        else
+            showMenu()
+        end
+    end
+end)
+
+showTab("Player")
+
+for _, obj in ipairs(sidebar:GetChildren()) do
+    if obj:IsA("TextButton") and obj.Name == "Player" then
+        obj.BackgroundColor3 = accent
+    end
+end
+
+-- Intro animation
+mainScale.Scale = 0.82
+main.Position = UDim2.new(0.5, -245, 0.5, -170)
+tween(mainScale, 0.4, {Scale = 1}, Enum.EasingStyle.Back)
+tween(main, 0.4, {
+    Position = UDim2.new(0.5, -245, 0.5, -187)
+}, Enum.EasingStyle.Back)
+
+print("LizaHub v3.0 | Orange Edition loaded!")
