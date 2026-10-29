@@ -3,15 +3,19 @@ local UIS = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local Lighting = game:GetService("Lighting")
+local SoundService = game:GetService("SoundService")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
-local HUB_NAME = "LizaHub v5.5"
+local HUB_NAME = "LizaHub v6.0"
 local ACCENT = Color3.fromRGB(255, 132, 35)
 local BACKGROUND = Color3.fromRGB(22, 23, 29)
 local MENU_SCALE = 1
 local BACKGROUND_IMAGE = ""
+local CLICK_SOUND_ID = "133196982070163"
+local SLIDER_SOUND_ID = "139719503904449"
+local UI_SOUND_VOLUME = 0.45
 local selectedTab = "Player"
 
 local oldGui = playerGui:FindFirstChild("LizaHub")
@@ -46,6 +50,21 @@ local function tween(object, duration, properties)
     )
     animation:Play()
     return animation
+end
+
+local function playUISound(soundId)
+    if not soundId or tostring(soundId):gsub("%s", "") == "" then return end
+    local sound = Instance.new("Sound")
+    sound.SoundId = "rbxassetid://" .. tostring(soundId):gsub("rbxassetid://", "")
+    sound.Volume = UI_SOUND_VOLUME
+    sound.Parent = SoundService
+    sound:Play()
+    sound.Ended:Connect(function()
+        sound:Destroy()
+    end)
+    task.delay(5, function()
+        if sound and sound.Parent then sound:Destroy() end
+    end)
 end
 
 local function getCharacter()
@@ -83,7 +102,7 @@ local splashTitle = make("TextLabel", {
     Position = UDim2.fromScale(0.5, 0.36),
     Size = UDim2.new(0.86, 0, 0, 80),
     BackgroundTransparency = 1,
-    Text = "LizaHub v5.5",
+    Text = HUB_NAME,
     TextColor3 = ACCENT,
     Font = Enum.Font.GothamBlack,
     TextScaled = true,
@@ -130,7 +149,6 @@ local main = make("Frame", {
 round(main, 12)
 
 local mainStroke = outline(main, ACCENT, 1.5)
-
 local scaleObject = make("UIScale", {Scale = MENU_SCALE}, main)
 
 local backgroundImage = make("ImageLabel", {
@@ -211,6 +229,7 @@ round(content, 9)
 local pages = {}
 local tabButtons = {}
 local currentTab
+local reopenButton
 
 local function createPage(name)
     local page = make("ScrollingFrame", {
@@ -274,6 +293,7 @@ local function createTab(name, order)
     round(tabButton, 7)
     tabButtons[name] = tabButton
     tabButton.Activated:Connect(function()
+        playUISound(CLICK_SOUND_ID)
         selectTab(name)
     end)
 
@@ -332,6 +352,7 @@ local function button(page, text, callback)
     end)
 
     b.Activated:Connect(function()
+        playUISound(CLICK_SOUND_ID)
         if callback then
             local ok, err = pcall(callback)
             if not ok then warn("[LizaHub] " .. tostring(err)) end
@@ -418,14 +439,21 @@ local function slider(page, sliderName, minValue, maxValue, initialValue, callba
     round(fill, 5)
 
     local dragging = false
+    local lastSoundValue = value
 
     local function setFromX(x)
         local width = math.max(track.AbsoluteSize.X, 1)
         local alpha = math.clamp((x - track.AbsolutePosition.X) / width, 0, 1)
-        value = math.floor(minValue + (maxValue - minValue) * alpha)
-        valueLabel.Text = tostring(value)
-        fill.Size = UDim2.new(alpha, 0, 1, 0)
-        if callback then callback(value) end
+        local newValue = math.floor(minValue + (maxValue - minValue) * alpha)
+        if newValue ~= value then
+            value = newValue
+            valueLabel.Text = tostring(value)
+            fill.Size = UDim2.new(alpha, 0, 1, 0)
+            if callback then callback(value) end
+            playUISound(SLIDER_SOUND_ID)
+        else
+            fill.Size = UDim2.new(alpha, 0, 1, 0)
+        end
     end
 
     track.InputBegan:Connect(function(input)
@@ -436,7 +464,7 @@ local function slider(page, sliderName, minValue, maxValue, initialValue, callba
         end
     end)
 
-    local changedConnection = UIS.InputChanged:Connect(function(input)
+    UIS.InputChanged:Connect(function(input)
         if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
             or input.UserInputType == Enum.UserInputType.Touch) then
             setFromX(input.Position.X)
@@ -453,7 +481,7 @@ end
 
 local playerPage = createTab("Player", 1)
 local movementPage = createTab("Movement", 2)
-local itemsPage = createTab("Items", 3)
+local itemsPage = createTab("Tools", 3)
 local funPage = createTab("Fun", 4)
 local buildingPage = createTab("Building", 5)
 local settingsPage = createTab("Settings", 6)
@@ -675,87 +703,25 @@ local function makeObjectPart(position)
     return part
 end
 
-section(itemsPage, "OBJECT CREATOR")
-
-button(itemsPage, "Shape: Block", function()
-    objectShape = objectShape == "Block" and "Sphere"
-        or objectShape == "Sphere" and "Circle" or "Block"
-end)
-
-button(itemsPage, "Mode: Place", function()
-    objectMode = objectMode == "Place" and "Teleport" or "Place"
-end)
-
-button(itemsPage, "Create Object", function()
-    local position = getTargetPosition()
-    if not position then return end
-
-    if objectMode == "Teleport" then
-        local root = getRoot()
-        if root then root.CFrame = CFrame.new(position + Vector3.new(0, 3, 0)) end
-    else
-        makeObjectPart(position)
-    end
-end)
-
-button(itemsPage, "Throw Object", function()
-    local root = getRoot()
-    if not root then return end
-
-    local part = makeObjectPart(root.Position + root.CFrame.LookVector * 4)
-    part.Anchored = false
-    part.AssemblyLinearVelocity = root.CFrame.LookVector * 100 + Vector3.new(0, 25, 0)
-end)
-
-button(itemsPage, "Delete My Objects", function()
-    for _, object in ipairs(customObjects) do
-        if object and object.Parent then object:Destroy() end
-    end
-    table.clear(customObjects)
-end)
-
-button(itemsPage, "Create Held Tool", function()
-    local backpack = player:FindFirstChildOfClass("Backpack")
-    if not backpack then return end
-
-    local tool = Instance.new("Tool")
-    tool.Name = "LizaHub Tool"
-    tool.RequiresHandle = true
-    tool.CanBeDropped = true
-
-    local handle = Instance.new("Part")
-    handle.Name = "Handle"
-    handle.Size = Vector3.new(1, 1, 1)
-    handle.Color = ACCENT
-    handle.Material = Enum.Material.Neon
-    handle.CanCollide = false
-    handle.Massless = true
-    handle.Parent = tool
-
-    tool.Parent = backpack
-    local hum = getHumanoid()
-    if hum then hum:EquipTool(tool) end
-end)
-
-section(itemsPage, "CUSTOM TOOL V5.5")
+section(itemsPage, "CUSTOM TOOL")
 
 local toolNameBox = textBox(itemsPage, "Tool name", customToolName, function(value)
     if value:gsub("%s", "") ~= "" then customToolName = value end
 end)
 
-local toolModeLabel = label(itemsPage, "Current tool mode: TP")
+local toolModeLabel = label(itemsPage, "Current mode: TP")
 
-button(itemsPage, "Change Tool Mode", function()
+button(itemsPage, "Change Mode", function()
     toolMode = toolMode == "TP" and "Throw" or toolMode == "Throw" and "Place" or "TP"
-    toolModeLabel.Text = "Current tool mode: " .. toolMode
+    toolModeLabel.Text = "Current mode: " .. toolMode
 end)
 
-button(itemsPage, "Give Custom Tool v5.5", function()
+button(itemsPage, "Give Tool", function()
     local backpack = player:FindFirstChildOfClass("Backpack")
     if not backpack then return end
 
     local tool = Instance.new("Tool")
-    tool.Name = customToolName .. " (LizaHub)"
+    tool.Name = customToolName
     tool.RequiresHandle = true
     tool.CanBeDropped = true
 
@@ -968,28 +934,42 @@ local titleBox = textBox(settingsPage, "Menu title", HUB_NAME, function(value)
     if value:gsub("%s", "") ~= "" then
         HUB_NAME = value
         titleLabel.Text = HUB_NAME
+        splashTitle.Text = HUB_NAME
     end
 end)
 
 local function updateAccent(color)
+    local oldAccent = ACCENT
     ACCENT = color
+
     titleLabel.TextColor3 = color
+    splashTitle.TextColor3 = color
     mainStroke.Color = color
     continueButton.BackgroundColor3 = color
-    reopenButton.BackgroundColor3 = Color3.fromRGB(31, 32, 40)
-    reopenButton.TextColor3 = color
+
+    if reopenButton then
+        reopenButton.TextColor3 = color
+        for _, stroke in ipairs(reopenButton:GetChildren()) do
+            if stroke:IsA("UIStroke") then stroke.Color = color end
+        end
+    end
 
     for tabName, tabButton in pairs(tabButtons) do
-        if tabName == currentTab then tabButton.BackgroundColor3 = color end
+        tabButton.BackgroundColor3 =
+            tabName == currentTab and color or Color3.fromRGB(42, 43, 52)
     end
 
     for _, object in ipairs(gui:GetDescendants()) do
         if object:IsA("ScrollingFrame") then
             object.ScrollBarImageColor3 = color
-        elseif object:IsA("TextLabel") and object.TextColor3 == Color3.fromRGB(255, 132, 35) then
+        elseif object:IsA("TextLabel") and object.TextColor3 == oldAccent then
+            object.TextColor3 = color
+        elseif object:IsA("TextButton") and object.TextColor3 == oldAccent then
             object.TextColor3 = color
         elseif object:IsA("Frame") and object.Name == "Fill" then
             object.BackgroundColor3 = color
+        elseif object:IsA("UIStroke") then
+            object.Color = color
         end
     end
 
@@ -1160,6 +1140,30 @@ button(settingsPage, "Reset Orange", function()
     applyPalette()
 end)
 
+section(settingsPage, "SOUND SETTINGS")
+
+textBox(settingsPage, "Click sound ID", CLICK_SOUND_ID, function(value)
+    local id = value:match("%d+")
+    if id then CLICK_SOUND_ID = id end
+end)
+
+textBox(settingsPage, "Slider tick sound ID", SLIDER_SOUND_ID, function(value)
+    local id = value:match("%d+")
+    if id then SLIDER_SOUND_ID = id end
+end)
+
+slider(settingsPage, "UI Sound Volume %", 0, 100, 45, function(value)
+    UI_SOUND_VOLUME = value / 100
+end)
+
+button(settingsPage, "Test Click Sound", function()
+    playUISound(CLICK_SOUND_ID)
+end)
+
+button(settingsPage, "Test Slider Sound", function()
+    playUISound(SLIDER_SOUND_ID)
+end)
+
 section(settingsPage, "BACKGROUND IMAGE")
 
 textBox(settingsPage, "Roblox image asset ID", "", function(value)
@@ -1224,7 +1228,10 @@ local function captureConfig()
         backgroundImage = BACKGROUND_IMAGE,
         scale = MENU_SCALE,
         selectedTab = selectedTab,
-        autoLoad = autoLoadConfig
+        autoLoad = autoLoadConfig,
+        clickSound = CLICK_SOUND_ID,
+        sliderSound = SLIDER_SOUND_ID,
+        soundVolume = UI_SOUND_VOLUME
     }
 end
 
@@ -1236,9 +1243,13 @@ local function applyConfig(config)
     BACKGROUND_IMAGE = config.backgroundImage or ""
     MENU_SCALE = config.scale or MENU_SCALE
     autoLoadConfig = config.autoLoad or false
+    CLICK_SOUND_ID = config.clickSound or CLICK_SOUND_ID
+    SLIDER_SOUND_ID = config.sliderSound or SLIDER_SOUND_ID
+    UI_SOUND_VOLUME = config.soundVolume or UI_SOUND_VOLUME
 
     titleLabel.Text = HUB_NAME
     titleBox.Text = HUB_NAME
+    splashTitle.Text = HUB_NAME
     main.BackgroundColor3 = BACKGROUND
     backgroundImage.Image = BACKGROUND_IMAGE
     backgroundImage.Visible = BACKGROUND_IMAGE ~= ""
@@ -1277,7 +1288,7 @@ end)
 
 configs.Default = captureConfig()
 
-local reopenButton = make("TextButton", {
+reopenButton = make("TextButton", {
     Name = "ReopenButton",
     AnchorPoint = Vector2.new(0, 0.5),
     Position = UDim2.new(0, 12, 0.5, 0),
@@ -1327,8 +1338,15 @@ local function showMenu()
     tween(scaleObject, 0.16, {Scale = targetScale})
 end
 
-closeButton.Activated:Connect(hideMenu)
-reopenButton.Activated:Connect(showMenu)
+closeButton.Activated:Connect(function()
+    playUISound(CLICK_SOUND_ID)
+    hideMenu()
+end)
+
+reopenButton.Activated:Connect(function()
+    playUISound(CLICK_SOUND_ID)
+    showMenu()
+end)
 
 local dragging = false
 local dragStart
@@ -1365,11 +1383,13 @@ end)
 
 UIS.InputBegan:Connect(function(input, processed)
     if not processed and input.KeyCode == Enum.KeyCode.RightShift then
+        playUISound(CLICK_SOUND_ID)
         if menuOpen then hideMenu() else showMenu() end
     end
 end)
 
 continueButton.Activated:Connect(function()
+    playUISound(CLICK_SOUND_ID)
     tween(splash, 0.2, {BackgroundTransparency = 1})
     tween(splashTitle, 0.2, {TextTransparency = 1})
     tween(disclaimerText, 0.2, {TextTransparency = 1})
@@ -1379,7 +1399,9 @@ continueButton.Activated:Connect(function()
         splash:Destroy()
         main.Visible = true
         fitScreen()
-        if autoLoadConfig and configs[selectedConfig] then applyConfig(configs[selectedConfig]) end
+        if autoLoadConfig and configs[selectedConfig] then
+            applyConfig(configs[selectedConfig])
+        end
     end)
 end)
 
@@ -1388,4 +1410,4 @@ player.CharacterAdded:Connect(function()
 end)
 
 selectTab("Player")
-print("LizaHub v5.5 loaded")
+print("LizaHub v6.0 loaded")
