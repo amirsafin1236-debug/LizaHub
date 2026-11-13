@@ -1,1413 +1,2435 @@
+--[[
+    LizaHubC v3 — один LocalScript, без серверных скриптов
+    Положи в StarterPlayer > StarterPlayerScripts
+
+    Вкладки: Движение | Полёт | Тулы | Skills | Дизайн
+    Дизайн: Выбрать тему / Конструктор тем (+ Vip) / Редактор анимаций
+]]
+
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
+local RS = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
+local Debris = game:GetService("Debris")
 local Lighting = game:GetService("Lighting")
-local SoundService = game:GetService("SoundService")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
+local mouse = player:GetMouse()
 
-local HUB_NAME = "LizaHub v6.0"
-local ACCENT = Color3.fromRGB(255, 132, 35)
-local BACKGROUND = Color3.fromRGB(22, 23, 29)
-local MENU_SCALE = 1
-local BACKGROUND_IMAGE = ""
-local CLICK_SOUND_ID = "133196982070163"
-local SLIDER_SOUND_ID = "139719503904449"
-local UI_SOUND_VOLUME = 0.45
-local selectedTab = "Player"
-
-local oldGui = playerGui:FindFirstChild("LizaHub")
-if oldGui then oldGui:Destroy() end
-
-local function make(className, properties, parent)
-    local object = Instance.new(className)
-    for key, value in pairs(properties or {}) do
-        object[key] = value
-    end
-    object.Parent = parent
-    return object
+for _, n in ipairs({ "LizaHubC", "LizaHubC_Disclaimer" }) do
+	local o = playerGui:FindFirstChild(n)
+	if o then o:Destroy() end
 end
 
-local function round(object, radius)
-    make("UICorner", {CornerRadius = UDim.new(0, radius or 8)}, object)
+local conns = {}
+local function track(c) table.insert(conns, c) return c end
+
+local function tw(o, t, props, style, dir)
+	local tween = TweenService:Create(o, TweenInfo.new(t, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out), props)
+	tween:Play()
+	return tween
 end
 
-local function outline(object, color, thickness)
-    return make("UIStroke", {
-        Color = color or ACCENT,
-        Thickness = thickness or 1,
-        Transparency = 0.2
-    }, object)
+local WHITE = Color3.new(1, 1, 1)
+local BLACK = Color3.new(0, 0, 0)
+
+---------------------------------------------------------------------
+-- АНИМАЦИИ (редактируются в "Редактор анимаций")
+---------------------------------------------------------------------
+local ES, ED = Enum.EasingStyle, Enum.EasingDirection
+local Anim = {
+	open   = { name = "Вылет панели",    style = ES.Back,  dir = ED.Out, time = 0.35, kind = "scaleIn" },
+	close  = { name = "Закрытие панели", style = ES.Quad,  dir = ED.In,  time = 0.2,  kind = "scaleOut" },
+	popup  = { name = "Мини-меню",       style = ES.Back,  dir = ED.Out, time = 0.28, kind = "scaleIn" },
+	tab    = { name = "Смена вкладки",   style = ES.Quint, dir = ED.Out, time = 0.28, kind = "slide" },
+	toggle = { name = "Тумблеры",        style = ES.Back,  dir = ED.Out, time = 0.2,  kind = "knob" },
+	theme  = { name = "Смена темы",      style = ES.Quad,  dir = ED.Out, time = 0.35, kind = "color" },
+}
+local AnimOrder = { "open", "close", "popup", "tab", "toggle", "theme" }
+local AnimDefaults = {}
+for id, a in pairs(Anim) do
+	AnimDefaults[id] = { style = a.style, dir = a.dir, time = a.time }
+end
+local function twA(id, o, props)
+	local a = Anim[id]
+	return tw(o, a.time, props, a.style, a.dir)
 end
 
-local function tween(object, duration, properties)
-    local animation = TweenService:Create(
-        object,
-        TweenInfo.new(duration, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-        properties
-    )
-    animation:Play()
-    return animation
+---------------------------------------------------------------------
+-- ШРИФТЫ
+---------------------------------------------------------------------
+local FontList = {}
+for _, n in ipairs({
+	"Oswald", "GothamBold", "Gotham", "FredokaOne", "Arcade", "Cartoon", "Code", "Fantasy",
+	"Michroma", "Bangers", "LuckiestGuy", "Jura", "Ubuntu", "Roboto", "PermanentMarker", "Sarpanch", "SciFi",
+}) do
+	local ok, f = pcall(function() return Enum.Font[n] end)
+	if ok and f then table.insert(FontList, f) end
+end
+local DefaultFont = FontList[1] or Enum.Font.GothamBold
+
+---------------------------------------------------------------------
+-- ТЕМЫ
+---------------------------------------------------------------------
+local ColorKeys = { "Accent", "Bg", "Panel", "Text" }
+
+local function mk(name, accent, bg, panel, text)
+	return {
+		text = name,
+		theme = {
+			Accent = Color3.fromHex(accent),
+			Bg = Color3.fromHex(bg),
+			Panel = Color3.fromHex(panel),
+			Text = Color3.fromHex(text),
+		},
+	}
 end
 
-local function playUISound(soundId)
-    if not soundId or tostring(soundId):gsub("%s", "") == "" then return end
-    local sound = Instance.new("Sound")
-    sound.SoundId = "rbxassetid://" .. tostring(soundId):gsub("rbxassetid://", "")
-    sound.Volume = UI_SOUND_VOLUME
-    sound.Parent = SoundService
-    sound:Play()
-    sound.Ended:Connect(function()
-        sound:Destroy()
-    end)
-    task.delay(5, function()
-        if sound and sound.Parent then sound:Destroy() end
-    end)
+local BuiltIn = {
+	mk("Оранжево-серая", "FF8C1A", "222226", "323238", "F0F0F0"),
+	mk("Розовая", "FF69B4", "18161F", "26232F", "F5F5FA"),
+	mk("Синяя", "3B82F6", "10172A", "1B2540", "F0F4FF"),
+	mk("Зелёная", "22C55E", "0F1A14", "1A2B21", "F0FFF5"),
+	mk("Фиолетовая", "A855F7", "170F24", "261A3A", "F8F0FF"),
+	mk("Красная", "EF4444", "1A0F10", "2B1A1C", "FFF0F0"),
+	mk("Тёмная", "6B7280", "0D0D0F", "1A1A1F", "E5E7EB"),
+	mk("Светлая", "6366F1", "F1F5F9", "FFFFFF", "141420"),
+}
+
+local Defaults = {
+	Title = "LizaHubC",
+	Transparency = 0.05,
+	Corner = 10,
+	Scale = UIS.TouchEnabled and 0.85 or 1,
+	Font = DefaultFont,
+	ToggleKey = Enum.KeyCode.RightShift,
+}
+local Theme = {}
+for k, v in pairs(Defaults) do Theme[k] = v end
+for _, k in ipairs(ColorKeys) do Theme[k] = BuiltIn[1].theme[k] end
+
+local currentThemeName = BuiltIn[1].text
+local CustomThemes = {}
+
+local function snapshot()
+	local t = {}
+	for _, k in ipairs(ColorKeys) do t[k] = Theme[k] end
+	return t
 end
 
-local function getCharacter()
-    return player.Character
+---------------------------------------------------------------------
+-- VIP-СОСТОЯНИЕ
+---------------------------------------------------------------------
+local Vip = {
+	mode = nil,       -- nil | "rainbow" | "mono" | "custom"
+	base = "dark",    -- "dark" | "light" (для радуги и монохрома)
+	saved = nil,      -- сохранённая тема до включения Vip
+	speed = 0.3,      -- скорость переливания (кастом)
+	preview = nil,    -- UIGradient превью в редакторе кастома
+	sorted = nil,
+	stops = {
+		{ t = 0, c = Color3.fromRGB(255, 0, 0) },
+		{ t = 1, c = Color3.fromRGB(0, 70, 255) },
+	},
+}
+local BasePalettes = {
+	dark = { Bg = Color3.fromHex("16161A"), Panel = Color3.fromHex("24242B"), Text = Color3.fromHex("F2F2F2") },
+	light = { Bg = Color3.fromHex("F3F4F8"), Panel = Color3.fromHex("FFFFFF"), Text = Color3.fromHex("15151B") },
+}
+local vipTargets = {}
+
+local function accentBg()
+	return Vip.mode and WHITE or Theme.Accent
 end
 
-local function getHumanoid()
-    local character = getCharacter()
-    return character and character:FindFirstChildOfClass("Humanoid")
+---------------------------------------------------------------------
+-- СИСТЕМА ТЕМ (bind / onTheme)
+---------------------------------------------------------------------
+local bound = {}
+local scale, scaleAnim, titleLabel
+
+local function create(class, props, parent)
+	local o = Instance.new(class)
+	for k, v in pairs(props) do o[k] = v end
+	o.Parent = parent
+	return o
 end
 
-local function getRoot()
-    local character = getCharacter()
-    return character and character:FindFirstChild("HumanoidRootPart")
+local function bind(inst, prop, key, fn)
+	table.insert(bound, { inst = inst, prop = prop, key = key, fn = fn })
+	if key == "Accent" and prop == "BackgroundColor3" then
+		table.insert(vipTargets, { inst = inst })
+	end
+	local v = Theme[key]
+	if Vip.mode and key == "Accent" and prop == "BackgroundColor3" then v = WHITE end
+	inst[prop] = fn and fn(v) or v
 end
 
-local gui = make("ScreenGui", {
-    Name = "LizaHub",
-    ResetOnSpawn = false,
-    IgnoreGuiInset = true,
-    ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+local function onTheme(inst, fn)
+	table.insert(bound, { inst = inst, call = fn })
+	fn()
+end
+
+local function applyTheme()
+	for i = #bound, 1, -1 do
+		local b = bound[i]
+		if b.inst.Parent == nil then
+			table.remove(bound, i)
+		elseif b.call then
+			b.call()
+		else
+			local v = Theme[b.key]
+			if Vip.mode and b.key == "Accent" and b.prop == "BackgroundColor3" then v = WHITE end
+			b.inst[b.prop] = b.fn and b.fn(v) or v
+		end
+	end
+	scale.Scale = math.max(0.01, Theme.Scale * scaleAnim.Value)
+	titleLabel.Text = Theme.Title
+end
+
+-- плавная смена темы
+local themeTween = 0
+local function tweenTheme(target)
+	themeTween += 1
+	local my = themeTween
+	local from = snapshot()
+	local start = os.clock()
+	task.spawn(function()
+		while my == themeTween do
+			local a = Anim.theme
+			local alpha = math.clamp((os.clock() - start) / math.max(a.time, 0.05), 0, 1)
+			local e = math.clamp(TweenService:GetValue(alpha, a.style, a.dir), 0, 1)
+			for _, k in ipairs(ColorKeys) do
+				Theme[k] = from[k]:Lerp(target[k], e)
+			end
+			applyTheme()
+			if alpha >= 1 then break end
+			RS.Heartbeat:Wait()
+		end
+	end)
+end
+
+local function corner(inst)
+	local c = create("UICorner", {}, inst)
+	bind(c, "CornerRadius", "Corner", function(v) return UDim.new(0, v) end)
+	return c
+end
+
+local function parseHex(s)
+	s = tostring(s):gsub("%s", "")
+	local ok, c = pcall(Color3.fromHex, s)
+	if ok then return c end
+	return nil
+end
+
+---------------------------------------------------------------------
+-- ОКНО
+---------------------------------------------------------------------
+local gui = create("ScreenGui", {
+	Name = "LizaHubC",
+	ResetOnSpawn = false,
+	DisplayOrder = 100,
+	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 }, playerGui)
 
-local splash = make("Frame", {
-    Name = "Disclaimer",
-    Size = UDim2.fromScale(1, 1),
-    BackgroundColor3 = Color3.fromRGB(9, 10, 14),
-    BackgroundTransparency = 0.05,
-    BorderSizePixel = 0,
-    ZIndex = 100
+local Main = create("Frame", {
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.fromScale(0.5, 0.5),
+	Size = UDim2.fromOffset(460, 330),
+	BorderSizePixel = 0,
+	ClipsDescendants = true,
+	Visible = false,
 }, gui)
+bind(Main, "BackgroundColor3", "Bg")
+bind(Main, "BackgroundTransparency", "Transparency")
+corner(Main)
 
-local splashTitle = make("TextLabel", {
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    Position = UDim2.fromScale(0.5, 0.36),
-    Size = UDim2.new(0.86, 0, 0, 80),
-    BackgroundTransparency = 1,
-    Text = HUB_NAME,
-    TextColor3 = ACCENT,
-    Font = Enum.Font.GothamBlack,
-    TextScaled = true,
-    ZIndex = 101
-}, splash)
+scaleAnim = Instance.new("NumberValue")
+scaleAnim.Value = 0.01
+scale = create("UIScale", { Scale = Theme.Scale * scaleAnim.Value }, Main)
+track(scaleAnim.Changed:Connect(function()
+	scale.Scale = math.max(0.01, Theme.Scale * scaleAnim.Value)
+end))
 
-local disclaimerText = make("TextLabel", {
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    Position = UDim2.fromScale(0.5, 0.51),
-    Size = UDim2.new(0.84, 0, 0, 100),
-    BackgroundTransparency = 1,
-    Text = "Только для тестов и веселья.\nНе предназначено для читерства.",
-    TextColor3 = Color3.fromRGB(235, 235, 240),
-    Font = Enum.Font.GothamMedium,
-    TextSize = 18,
-    TextWrapped = true,
-    ZIndex = 101
-}, splash)
+local TitleBar = create("Frame", { Size = UDim2.new(1, 0, 0, 34), BorderSizePixel = 0 }, Main)
+bind(TitleBar, "BackgroundColor3", "Accent")
+corner(TitleBar)
 
-local continueButton = make("TextButton", {
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    Position = UDim2.fromScale(0.5, 0.67),
-    Size = UDim2.fromOffset(190, 46),
-    BackgroundColor3 = ACCENT,
-    BorderSizePixel = 0,
-    Text = "Продолжить",
-    TextColor3 = Color3.new(1, 1, 1),
-    Font = Enum.Font.GothamBold,
-    TextSize = 16,
-    ZIndex = 101
-}, splash)
-round(continueButton, 10)
+titleLabel = create("TextLabel", {
+	BackgroundTransparency = 1,
+	Position = UDim2.fromOffset(12, 0),
+	Size = UDim2.new(1, -60, 1, 0),
+	Text = Theme.Title,
+	TextSize = 20,
+	TextColor3 = WHITE,
+	TextXAlignment = Enum.TextXAlignment.Left,
+}, TitleBar)
+bind(titleLabel, "Font", "Font")
 
-local main = make("Frame", {
-    Name = "Main",
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    Position = UDim2.fromScale(0.5, 0.5),
-    Size = UDim2.fromOffset(570, 430),
-    BackgroundColor3 = BACKGROUND,
-    BorderSizePixel = 0,
-    ClipsDescendants = true,
-    Visible = false
+local closeBtn = create("TextButton", {
+	BackgroundTransparency = 1,
+	Position = UDim2.new(1, -40, 0, 0),
+	Size = UDim2.fromOffset(38, 34),
+	Text = "✕",
+	TextSize = 18,
+	TextColor3 = WHITE,
+}, TitleBar)
+bind(closeBtn, "Font", "Font")
+
+local Body = create("Frame", {
+	BackgroundTransparency = 1,
+	Position = UDim2.fromOffset(0, 34),
+	Size = UDim2.new(1, 0, 1, -34),
+}, Main)
+
+local openBtn = create("TextButton", {
+	AnchorPoint = Vector2.new(1, 0),
+	Position = UDim2.new(1, -10, 0.2, 0),
+	Size = UDim2.fromOffset(0, 0),
+	Text = "L",
+	TextSize = 24,
+	TextColor3 = WHITE,
+	BorderSizePixel = 0,
+	AutoButtonColor = false,
+	Visible = false,
 }, gui)
-round(main, 12)
+bind(openBtn, "BackgroundColor3", "Accent")
+bind(openBtn, "Font", "Font")
+create("UICorner", { CornerRadius = UDim.new(1, 0) }, openBtn)
 
-local mainStroke = outline(main, ACCENT, 1.5)
-local scaleObject = make("UIScale", {Scale = MENU_SCALE}, main)
+-- открыть / закрыть с анимацией
+local isOpen, openToken = false, 0
+local closePopup -- объявлена ниже
 
-local backgroundImage = make("ImageLabel", {
-    Name = "CustomBackground",
-    Size = UDim2.fromScale(1, 1),
-    BackgroundTransparency = 1,
-    Image = "",
-    ImageTransparency = 0.25,
-    ScaleType = Enum.ScaleType.Crop,
-    ZIndex = 0
-}, main)
+local function setOpen(v)
+	if isOpen == v then return end
+	isOpen = v
+	openToken += 1
+	local my = openToken
+	if v then
+		Main.Visible = true
+		twA("open", scaleAnim, { Value = 1 })
+	else
+		if closePopup then closePopup() end
+		local t = twA("close", scaleAnim, { Value = 0.01 })
+		t.Completed:Connect(function()
+			if openToken == my then Main.Visible = false end
+		end)
+	end
+end
+closeBtn.Activated:Connect(function() setOpen(false) end)
 
-local header = make("Frame", {
-    Name = "Header",
-    Size = UDim2.new(1, 0, 0, 46),
-    BackgroundColor3 = Color3.fromRGB(31, 32, 40),
-    BorderSizePixel = 0,
-    ZIndex = 2
-}, main)
+-- перетаскивание (мышь + тач)
+local function makeDraggable(handle, target, onClick)
+	local dragging, dragInput, dragStart, startPos, moved = false, nil, nil, nil, 0
+	track(handle.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			moved = 0
+			dragStart = input.Position
+			startPos = target.Position
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then
+					dragging = false
+					if onClick and moved < 6 then onClick() end
+				end
+			end)
+		end
+	end))
+	track(handle.InputChanged:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseMovement
+			or input.UserInputType == Enum.UserInputType.Touch then
+			dragInput = input
+		end
+	end))
+	track(UIS.InputChanged:Connect(function(input)
+		if dragging and input == dragInput then
+			local d = input.Position - dragStart
+			moved = math.max(moved, d.Magnitude)
+			local vp = gui.AbsoluteSize
+			target.Position = UDim2.new(
+				math.clamp(startPos.X.Scale + d.X / vp.X, 0.03, 0.97), startPos.X.Offset,
+				math.clamp(startPos.Y.Scale + d.Y / vp.Y, 0.03, 0.97), startPos.Y.Offset
+			)
+		end
+	end))
+end
+makeDraggable(TitleBar, Main)
+makeDraggable(openBtn, openBtn, function() setOpen(not isOpen) end)
 
-local titleLabel = make("TextLabel", {
-    Position = UDim2.fromOffset(14, 0),
-    Size = UDim2.new(1, -100, 1, 0),
-    BackgroundTransparency = 1,
-    Text = HUB_NAME,
-    TextColor3 = ACCENT,
-    Font = Enum.Font.GothamBold,
-    TextSize = 16,
-    TextXAlignment = Enum.TextXAlignment.Left,
-    ZIndex = 3
-}, header)
+-- вкладки
+local Tabs = create("Frame", {
+	BackgroundTransparency = 1,
+	Position = UDim2.fromOffset(8, 8),
+	Size = UDim2.fromOffset(96, 280),
+}, Body)
+create("UIListLayout", { Padding = UDim.new(0, 6) }, Tabs)
 
-local closeButton = make("TextButton", {
-    Position = UDim2.new(1, -39, 0, 8),
-    Size = UDim2.fromOffset(29, 29),
-    BackgroundColor3 = Color3.fromRGB(65, 42, 42),
-    BorderSizePixel = 0,
-    Text = "×",
-    TextColor3 = Color3.new(1, 1, 1),
-    TextSize = 22,
-    Font = Enum.Font.GothamBold,
-    ZIndex = 3
-}, header)
-round(closeButton, 7)
+local Content = create("Frame", {
+	BackgroundTransparency = 1,
+	Position = UDim2.fromOffset(112, 8),
+	Size = UDim2.new(1, -120, 1, -16),
+	ClipsDescendants = true,
+}, Body)
 
-local sidebar = make("Frame", {
-    Position = UDim2.fromOffset(9, 55),
-    Size = UDim2.new(0, 132, 1, -64),
-    BackgroundColor3 = Color3.fromRGB(28, 29, 36),
-    BackgroundTransparency = 0.05,
-    BorderSizePixel = 0,
-    ZIndex = 2
-}, main)
-round(sidebar, 9)
-
-local tabList = make("Frame", {
-    Position = UDim2.fromOffset(6, 7),
-    Size = UDim2.new(1, -12, 1, -14),
-    BackgroundTransparency = 1
-}, sidebar)
-
-make("UIListLayout", {
-    Padding = UDim.new(0, 6),
-    SortOrder = Enum.SortOrder.LayoutOrder
-}, tabList)
-
-local content = make("Frame", {
-    Position = UDim2.fromOffset(149, 55),
-    Size = UDim2.new(1, -158, 1, -64),
-    BackgroundColor3 = Color3.fromRGB(28, 29, 36),
-    BackgroundTransparency = 0.04,
-    BorderSizePixel = 0,
-    ClipsDescendants = true,
-    ZIndex = 2
-}, main)
-round(content, 9)
-
-local pages = {}
-local tabButtons = {}
-local currentTab
-local reopenButton
-
-local function createPage(name)
-    local page = make("ScrollingFrame", {
-        Name = name,
-        Size = UDim2.fromScale(1, 1),
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        ScrollBarThickness = 4,
-        ScrollBarImageColor3 = ACCENT,
-        AutomaticCanvasSize = Enum.AutomaticSize.Y,
-        CanvasSize = UDim2.new(),
-        Visible = false,
-        ZIndex = 3
-    }, content)
-
-    make("UIPadding", {
-        PaddingTop = UDim.new(0, 9),
-        PaddingBottom = UDim.new(0, 10),
-        PaddingLeft = UDim.new(0, 9),
-        PaddingRight = UDim.new(0, 9)
-    }, page)
-
-    make("UIListLayout", {
-        Padding = UDim.new(0, 7),
-        SortOrder = Enum.SortOrder.LayoutOrder
-    }, page)
-
-    pages[name] = page
-    return page
+---------------------------------------------------------------------
+-- ЭФФЕКТЫ КНОПОК
+---------------------------------------------------------------------
+local function fx(b)
+	b.MouseEnter:Connect(function() tw(b, 0.12, { BackgroundTransparency = 0.12 }) end)
+	b.MouseLeave:Connect(function() tw(b, 0.15, { BackgroundTransparency = 0 }) end)
+	b.InputBegan:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+			tw(b, 0.08, { BackgroundTransparency = 0.35 })
+		end
+	end)
+	b.InputEnded:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+			tw(b, 0.18, { BackgroundTransparency = 0 })
+		end
+	end)
 end
 
-local function selectTab(name)
-    currentTab = name
-    selectedTab = name
+---------------------------------------------------------------------
+-- ВКЛАДКИ (создание)
+---------------------------------------------------------------------
+local tabs = {}
+local function addTab(name)
+	local page = create("ScrollingFrame", {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Size = UDim2.fromScale(1, 1),
+		ScrollBarThickness = 4,
+		CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		Visible = #tabs == 0,
+	}, Content)
+	create("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, page)
+	create("UIPadding", {
+		PaddingTop = UDim.new(0, 2), PaddingLeft = UDim.new(0, 2),
+		PaddingRight = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8),
+	}, page)
 
-    for tabName, page in pairs(pages) do
-        page.Visible = tabName == name
-    end
+	local btn = create("TextButton", {
+		Size = UDim2.new(1, 0, 0, 34),
+		Text = name,
+		TextSize = 16,
+		BorderSizePixel = 0,
+		AutoButtonColor = false,
+	}, Tabs)
+	bind(btn, "Font", "Font")
+	bind(btn, "TextColor3", "Text")
+	corner(btn)
+	fx(btn)
 
-    for tabName, tabButton in pairs(tabButtons) do
-        tabButton.BackgroundColor3 =
-            tabName == name and ACCENT or Color3.fromRGB(42, 43, 52)
-    end
+	local tab = { btn = btn, page = page }
+	table.insert(tabs, tab)
+	onTheme(btn, function()
+		btn.BackgroundColor3 = page.Visible and accentBg() or Theme.Panel
+	end)
+	table.insert(vipTargets, { inst = btn, want = function() return page.Visible end })
+
+	btn.Activated:Connect(function()
+		for _, t in ipairs(tabs) do
+			local active = (t == tab)
+			t.page.Visible = active
+			tw(t.btn, 0.2, { BackgroundColor3 = active and accentBg() or Theme.Panel })
+		end
+		page.Position = UDim2.fromOffset(24, 0)
+		twA("tab", page, { Position = UDim2.fromOffset(0, 0) })
+	end)
+	return page
 end
 
-local function createTab(name, order)
-    local tabButton = make("TextButton", {
-        Name = name .. "Tab",
-        Size = UDim2.new(1, 0, 0, 34),
-        BackgroundColor3 = Color3.fromRGB(42, 43, 52),
-        BorderSizePixel = 0,
-        Text = name,
-        TextColor3 = Color3.new(1, 1, 1),
-        Font = Enum.Font.GothamSemibold,
-        TextSize = 12,
-        LayoutOrder = order,
-        AutoButtonColor = false,
-        ZIndex = 4
-    }, tabList)
+---------------------------------------------------------------------
+-- ПОПАПЫ (мини-меню)
+---------------------------------------------------------------------
+local overlay = create("TextButton", {
+	Text = "",
+	AutoButtonColor = false,
+	BackgroundColor3 = BLACK,
+	BackgroundTransparency = 1,
+	Position = UDim2.fromOffset(0, 34),
+	Size = UDim2.new(1, 0, 1, -34),
+	BorderSizePixel = 0,
+	Visible = false,
+}, Main)
 
-    round(tabButton, 7)
-    tabButtons[name] = tabButton
-    tabButton.Activated:Connect(function()
-        playUISound(CLICK_SOUND_ID)
-        selectTab(name)
-    end)
+local currentPopup, currentPopupScale
 
-    return createPage(name)
+closePopup = function()
+	if not currentPopup then return end
+	local p, ps = currentPopup, currentPopupScale
+	currentPopup, currentPopupScale = nil, nil
+	Vip.preview = nil
+	tw(ps, 0.15, { Scale = 0.8 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	tw(overlay, 0.15, { BackgroundTransparency = 1 })
+	task.delay(0.17, function()
+		if p.Parent then p:Destroy() end
+		if not currentPopup then overlay.Visible = false end
+	end)
+end
+overlay.Activated:Connect(function() closePopup() end)
+
+local function showPopup(w, h, title)
+	if currentPopup then currentPopup:Destroy() currentPopup = nil end
+	Vip.preview = nil
+	overlay.Visible = true
+	tw(overlay, 0.2, { BackgroundTransparency = 0.45 })
+
+	local p = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(w, h),
+		BorderSizePixel = 0,
+		Active = true,
+	}, overlay)
+	bind(p, "BackgroundColor3", "Bg")
+	corner(p)
+	local stroke = create("UIStroke", { Thickness = 1.5, Transparency = 0.4, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, p)
+	onTheme(p, function() stroke.Color = Theme.Accent end)
+	local ps = create("UIScale", { Scale = 0.8 }, p)
+	twA("popup", ps, { Scale = 1 })
+
+	local t = create("TextLabel", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(14, 4),
+		Size = UDim2.new(1, -60, 0, 32),
+		Text = title,
+		TextSize = 20,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, p)
+	bind(t, "TextColor3", "Accent")
+	bind(t, "Font", "Font")
+
+	local x = create("TextButton", {
+		BackgroundTransparency = 1,
+		Position = UDim2.new(1, -38, 0, 4),
+		Size = UDim2.fromOffset(32, 32),
+		Text = "✕",
+		TextSize = 18,
+	}, p)
+	bind(x, "TextColor3", "Text")
+	bind(x, "Font", "Font")
+	x.Activated:Connect(function() closePopup() end)
+
+	currentPopup, currentPopupScale = p, ps
+	return p
 end
 
-local function section(page, text)
-    return make("TextLabel", {
-        Size = UDim2.new(1, -2, 0, 24),
-        BackgroundTransparency = 1,
-        Text = text,
-        TextColor3 = ACCENT,
-        Font = Enum.Font.GothamBold,
-        TextSize = 13,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        TextWrapped = true,
-        ZIndex = 4
-    }, page)
+-- прокручиваемый список внутри попапа
+local function popupList(p)
+	local sc = create("ScrollingFrame", {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(8, 40),
+		Size = UDim2.new(1, -16, 1, -48),
+		ScrollBarThickness = 4,
+		CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+	}, p)
+	create("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, sc)
+	create("UIPadding", { PaddingRight = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6) }, sc)
+	return sc
 end
 
-local function label(page, text)
-    return make("TextLabel", {
-        Size = UDim2.new(1, -2, 0, 30),
-        BackgroundTransparency = 1,
-        Text = text,
-        TextColor3 = Color3.fromRGB(215, 215, 222),
-        Font = Enum.Font.Gotham,
-        TextSize = 11,
-        TextWrapped = true,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        ZIndex = 4
-    }, page)
+---------------------------------------------------------------------
+-- КОМПОНЕНТЫ
+---------------------------------------------------------------------
+local function note(parent, text)
+	local l = create("TextLabel", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		TextWrapped = true,
+		Text = text,
+		TextSize = 14,
+		TextTransparency = 0.2,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+	}, parent)
+	bind(l, "TextColor3", "Text")
+	bind(l, "Font", "Font")
+	return l
 end
 
-local function button(page, text, callback)
-    local b = make("TextButton", {
-        Size = UDim2.new(1, -2, 0, 33),
-        BackgroundColor3 = Color3.fromRGB(43, 44, 53),
-        BorderSizePixel = 0,
-        Text = text,
-        TextColor3 = Color3.fromRGB(245, 245, 245),
-        Font = Enum.Font.GothamSemibold,
-        TextSize = 11,
-        AutoButtonColor = false,
-        ZIndex = 4
-    }, page)
-
-    round(b, 7)
-
-    b.MouseEnter:Connect(function()
-        tween(b, 0.12, {BackgroundColor3 = ACCENT})
-    end)
-
-    b.MouseLeave:Connect(function()
-        tween(b, 0.12, {BackgroundColor3 = Color3.fromRGB(43, 44, 53)})
-    end)
-
-    b.Activated:Connect(function()
-        playUISound(CLICK_SOUND_ID)
-        if callback then
-            local ok, err = pcall(callback)
-            if not ok then warn("[LizaHub] " .. tostring(err)) end
-        end
-    end)
-
-    return b
+local function button(parent, text, callback, red)
+	local b = create("TextButton", {
+		Size = UDim2.new(1, 0, 0, 34),
+		Text = text,
+		TextSize = 16,
+		TextColor3 = WHITE,
+		BorderSizePixel = 0,
+		AutoButtonColor = false,
+	}, parent)
+	if red then b.BackgroundColor3 = Color3.fromRGB(200, 60, 70)
+	else bind(b, "BackgroundColor3", "Accent") end
+	bind(b, "Font", "Font")
+	corner(b)
+	fx(b)
+	b.Activated:Connect(callback)
+	return b
 end
 
-local function textBox(page, placeholder, initialText, callback)
-    local box = make("TextBox", {
-        Size = UDim2.new(1, -2, 0, 33),
-        BackgroundColor3 = Color3.fromRGB(39, 40, 49),
-        BorderSizePixel = 0,
-        Text = initialText or "",
-        PlaceholderText = placeholder,
-        PlaceholderColor3 = Color3.fromRGB(145, 145, 155),
-        TextColor3 = Color3.new(1, 1, 1),
-        Font = Enum.Font.Gotham,
-        TextSize = 11,
-        ClearTextOnFocus = false,
-        ZIndex = 4
-    }, page)
+-- пилюля-переключатель (для toggle и для строк Skills)
+local function makePill(parent, default, callback)
+	local pill = create("Frame", {
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -10, 0.5, 0),
+		Size = UDim2.fromOffset(40, 20),
+		BorderSizePixel = 0,
+	}, parent)
+	create("UICorner", { CornerRadius = UDim.new(1, 0) }, pill)
+	local knob = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Size = UDim2.fromOffset(16, 16),
+		BackgroundColor3 = WHITE,
+		BorderSizePixel = 0,
+	}, pill)
+	create("UICorner", { CornerRadius = UDim.new(1, 0) }, knob)
 
-    round(box, 7)
+	local state = default
+	local function render(animate)
+		local pos = state and UDim2.new(1, -12, 0.5, 0) or UDim2.new(0, 12, 0.5, 0)
+		local col = state and accentBg() or Theme.Bg
+		if animate then
+			twA("toggle", knob, { Position = pos })
+			tw(pill, 0.2, { BackgroundColor3 = col })
+		else
+			knob.Position = pos
+			pill.BackgroundColor3 = col
+		end
+	end
+	onTheme(pill, function() render(false) end)
+	table.insert(vipTargets, { inst = pill, want = function() return state end })
 
-    box.FocusLost:Connect(function()
-        if callback then callback(box.Text) end
-    end)
-
-    return box
+	return {
+		set = function(v) state = v render(true) end,
+		flip = function() state = not state render(true) callback(state) end,
+		get = function() return state end,
+	}
 end
 
-local function slider(page, sliderName, minValue, maxValue, initialValue, callback)
-    local holder = make("Frame", {
-        Size = UDim2.new(1, -2, 0, 48),
-        BackgroundTransparency = 1,
-        ZIndex = 4
-    }, page)
+local function toggle(parent, text, default, callback)
+	local row = create("TextButton", {
+		Size = UDim2.new(1, 0, 0, 36),
+		Text = "",
+		AutoButtonColor = false,
+		BorderSizePixel = 0,
+	}, parent)
+	bind(row, "BackgroundColor3", "Panel")
+	corner(row)
+	fx(row)
 
-    local value = initialValue
+	local lbl = create("TextLabel", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(10, 0),
+		Size = UDim2.new(1, -70, 1, 0),
+		Text = text,
+		TextSize = 15,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, row)
+	bind(lbl, "TextColor3", "Text")
+	bind(lbl, "Font", "Font")
 
-    make("TextLabel", {
-        Size = UDim2.new(1, -55, 0, 20),
-        BackgroundTransparency = 1,
-        Text = sliderName,
-        TextColor3 = Color3.fromRGB(230, 230, 235),
-        Font = Enum.Font.Gotham,
-        TextSize = 11,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        ZIndex = 4
-    }, holder)
-
-    local valueLabel = make("TextLabel", {
-        Position = UDim2.new(1, -50, 0, 0),
-        Size = UDim2.fromOffset(50, 20),
-        BackgroundTransparency = 1,
-        Text = tostring(value),
-        TextColor3 = ACCENT,
-        Font = Enum.Font.GothamBold,
-        TextSize = 11,
-        TextXAlignment = Enum.TextXAlignment.Right,
-        ZIndex = 4
-    }, holder)
-
-    local track = make("TextButton", {
-        Position = UDim2.fromOffset(0, 29),
-        Size = UDim2.new(1, 0, 0, 8),
-        BackgroundColor3 = Color3.fromRGB(57, 58, 68),
-        BorderSizePixel = 0,
-        Text = "",
-        AutoButtonColor = false,
-        ZIndex = 4
-    }, holder)
-    round(track, 5)
-
-    local fill = make("Frame", {
-        Name = "Fill",
-        Size = UDim2.new((value - minValue) / (maxValue - minValue), 0, 1, 0),
-        BackgroundColor3 = ACCENT,
-        BorderSizePixel = 0,
-        ZIndex = 5
-    }, track)
-    round(fill, 5)
-
-    local dragging = false
-    local lastSoundValue = value
-
-    local function setFromX(x)
-        local width = math.max(track.AbsoluteSize.X, 1)
-        local alpha = math.clamp((x - track.AbsolutePosition.X) / width, 0, 1)
-        local newValue = math.floor(minValue + (maxValue - minValue) * alpha)
-        if newValue ~= value then
-            value = newValue
-            valueLabel.Text = tostring(value)
-            fill.Size = UDim2.new(alpha, 0, 1, 0)
-            if callback then callback(value) end
-            playUISound(SLIDER_SOUND_ID)
-        else
-            fill.Size = UDim2.new(alpha, 0, 1, 0)
-        end
-    end
-
-    track.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            setFromX(input.Position.X)
-        end
-    end)
-
-    UIS.InputChanged:Connect(function(input)
-        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
-            or input.UserInputType == Enum.UserInputType.Touch) then
-            setFromX(input.Position.X)
-        end
-    end)
-
-    UIS.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
-        end
-    end)
+	local pl = makePill(row, default, callback)
+	row.Activated:Connect(pl.flip)
+	return pl.set
 end
 
-local playerPage = createTab("Player", 1)
-local movementPage = createTab("Movement", 2)
-local itemsPage = createTab("Tools", 3)
-local funPage = createTab("Fun", 4)
-local buildingPage = createTab("Building", 5)
-local settingsPage = createTab("Settings", 6)
+-- универсальный "тянущий" обработчик (слайдер / цветовой квадрат)
+local function dragArea(hit, ref, cb)
+	local dragging = false
+	local cs = {}
+	local function upd(input)
+		local ap, as = ref.AbsolutePosition, ref.AbsoluteSize
+		cb(
+			math.clamp((input.Position.X - ap.X) / math.max(as.X, 1), 0, 1),
+			math.clamp((input.Position.Y - ap.Y) / math.max(as.Y, 1), 0, 1)
+		)
+	end
+	hit.InputBegan:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			upd(i)
+		end
+	end)
+	table.insert(cs, UIS.InputChanged:Connect(function(i)
+		if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+			upd(i)
+		end
+	end))
+	table.insert(cs, UIS.InputEnded:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+			dragging = false
+		end
+	end))
+	hit.Destroying:Connect(function()
+		for _, c in ipairs(cs) do c:Disconnect() end
+	end)
+end
 
-section(playerPage, "CHARACTER TEST CONTROLS")
-label(playerPage, "These controls affect your character in your own test experience.")
+local function slider(parent, text, min, max, default, step, hardMax, callback)
+	local row = create("Frame", { Size = UDim2.new(1, 0, 0, 56), BorderSizePixel = 0 }, parent)
+	bind(row, "BackgroundColor3", "Panel")
+	corner(row)
 
-slider(playerPage, "WalkSpeed", 0, 100, 16, function(value)
-    local hum = getHumanoid()
-    if hum then hum.WalkSpeed = value end
+	local lbl = create("TextLabel", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(10, 4),
+		Size = UDim2.new(1, -90, 0, 22),
+		Text = text,
+		TextSize = 15,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, row)
+	bind(lbl, "TextColor3", "Text")
+	bind(lbl, "Font", "Font")
+
+	local box = create("TextBox", {
+		Position = UDim2.new(1, -74, 0, 4),
+		Size = UDim2.fromOffset(64, 22),
+		Text = tostring(default),
+		TextSize = 14,
+		ClearTextOnFocus = false,
+		BorderSizePixel = 0,
+	}, row)
+	bind(box, "BackgroundColor3", "Bg")
+	bind(box, "TextColor3", "Text")
+	bind(box, "Font", "Font")
+	corner(box)
+
+	local bar = create("Frame", {
+		Position = UDim2.new(0, 10, 0, 38),
+		Size = UDim2.new(1, -20, 0, 8),
+		BorderSizePixel = 0,
+	}, row)
+	bind(bar, "BackgroundColor3", "Bg")
+	corner(bar)
+	local fill = create("Frame", { Size = UDim2.fromScale(0, 1), BorderSizePixel = 0 }, bar)
+	bind(fill, "BackgroundColor3", "Accent")
+	corner(fill)
+
+	local hit = create("TextButton", {
+		BackgroundTransparency = 1,
+		Text = "",
+		Position = UDim2.new(0, 0, 0, 28),
+		Size = UDim2.new(1, 0, 0, 28),
+	}, row)
+
+	local function set(v, fire)
+		v = math.clamp(v, min, hardMax or max)
+		box.Text = tostring(math.floor(v * 100 + 0.5) / 100)
+		fill.Size = UDim2.fromScale(math.clamp((v - min) / (max - min), 0, 1), 1)
+		if fire ~= false then callback(v) end
+	end
+	set(default, false)
+
+	dragArea(hit, bar, function(rx)
+		local v = min + (max - min) * rx
+		set(math.floor(v / step + 0.5) * step)
+	end)
+	box.FocusLost:Connect(function()
+		local n = tonumber(box.Text)
+		if n then set(n) else set(default, false) end
+	end)
+	return function(v) set(v, false) end
+end
+
+local function input(parent, text, default, callback)
+	local row = create("Frame", { Size = UDim2.new(1, 0, 0, 38), BorderSizePixel = 0 }, parent)
+	bind(row, "BackgroundColor3", "Panel")
+	corner(row)
+	local lbl = create("TextLabel", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(10, 0),
+		Size = UDim2.new(0.42, -10, 1, 0),
+		Text = text,
+		TextSize = 15,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, row)
+	bind(lbl, "TextColor3", "Text")
+	bind(lbl, "Font", "Font")
+	local box = create("TextBox", {
+		Position = UDim2.new(0.42, 0, 0, 6),
+		Size = UDim2.new(0.58, -8, 1, -12),
+		Text = default,
+		TextSize = 14,
+		ClearTextOnFocus = false,
+		BorderSizePixel = 0,
+	}, row)
+	bind(box, "BackgroundColor3", "Bg")
+	bind(box, "TextColor3", "Text")
+	bind(box, "Font", "Font")
+	corner(box)
+	box.FocusLost:Connect(function() callback(box.Text, box) end)
+	return function(v) box.Text = v end
+end
+
+local function cycle(parent, text, options, default, callback)
+	local idx = table.find(options, default) or 1
+	local b = create("TextButton", {
+		Size = UDim2.new(1, 0, 0, 34),
+		TextSize = 15,
+		BorderSizePixel = 0,
+		AutoButtonColor = false,
+	}, parent)
+	bind(b, "Font", "Font")
+	bind(b, "TextColor3", "Text")
+	bind(b, "BackgroundColor3", "Panel")
+	corner(b)
+	fx(b)
+	local function show() b.Text = text .. ": " .. tostring(options[idx]) end
+	show()
+	b.Activated:Connect(function()
+		idx = idx % #options + 1
+		show()
+		callback(options[idx])
+	end)
+	return b
+end
+
+local function colorRow(parent, text, startColor, onClick)
+	local row = create("Frame", { Size = UDim2.new(1, 0, 0, 38), BorderSizePixel = 0 }, parent)
+	bind(row, "BackgroundColor3", "Panel")
+	corner(row)
+	local lbl = create("TextLabel", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(10, 0),
+		Size = UDim2.new(0.6, -10, 1, 0),
+		Text = text,
+		TextSize = 15,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, row)
+	bind(lbl, "TextColor3", "Text")
+	bind(lbl, "Font", "Font")
+	local sw = create("TextButton", {
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -8, 0.5, 0),
+		Size = UDim2.fromOffset(70, 26),
+		Text = "",
+		BorderSizePixel = 0,
+		AutoButtonColor = false,
+		BackgroundColor3 = startColor,
+	}, row)
+	create("UICorner", { CornerRadius = UDim.new(0, 6) }, sw)
+	create("UIStroke", { Color = Color3.fromRGB(140, 140, 140), Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, sw)
+	sw.Activated:Connect(function() onClick(sw) end)
+	return sw
+end
+
+-- ЦВЕТОВОЙ ПИКЕР: квадрат (насыщенность/яркость) + радужная полоса (оттенок)
+local function colorPicker(parent, x, y, size, onChange)
+	local h, s, v = 0, 1, 1
+
+	local holder = create("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(x, y),
+		Size = UDim2.fromOffset(size + 30, size),
+	}, parent)
+
+	local sv = create("Frame", {
+		Size = UDim2.fromOffset(size, size),
+		BackgroundColor3 = Color3.fromHSV(0, 1, 1),
+		BorderSizePixel = 0,
+	}, holder)
+	create("UICorner", { CornerRadius = UDim.new(0, 8) }, sv)
+
+	local white = create("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = WHITE, BorderSizePixel = 0 }, sv)
+	create("UICorner", { CornerRadius = UDim.new(0, 8) }, white)
+	create("UIGradient", { Transparency = NumberSequence.new(0, 1) }, white)
+
+	local black = create("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = BLACK, BorderSizePixel = 0 }, sv)
+	create("UICorner", { CornerRadius = UDim.new(0, 8) }, black)
+	create("UIGradient", { Rotation = 90, Transparency = NumberSequence.new(1, 0) }, black)
+
+	local svCur = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Size = UDim2.fromOffset(16, 16),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+	}, sv)
+	create("UICorner", { CornerRadius = UDim.new(1, 0) }, svCur)
+	create("UIStroke", { Color = BLACK, Thickness = 3 }, svCur)
+	local inner = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(10, 10),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+	}, svCur)
+	create("UICorner", { CornerRadius = UDim.new(1, 0) }, inner)
+	create("UIStroke", { Color = WHITE, Thickness = 2 }, inner)
+
+	local hue = create("Frame", {
+		Position = UDim2.fromOffset(size + 10, 0),
+		Size = UDim2.fromOffset(20, size),
+		BackgroundColor3 = WHITE,
+		BorderSizePixel = 0,
+	}, holder)
+	create("UICorner", { CornerRadius = UDim.new(0, 6) }, hue)
+	local kps = {}
+	for k = 0, 6 do
+		table.insert(kps, ColorSequenceKeypoint.new(k / 6, Color3.fromHSV((k % 6) / 6, 1, 1)))
+	end
+	create("UIGradient", { Rotation = 90, Color = ColorSequence.new(kps) }, hue)
+	local hueCur = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Size = UDim2.new(1, 6, 0, 6),
+		BackgroundColor3 = WHITE,
+		BorderSizePixel = 0,
+	}, hue)
+	create("UICorner", { CornerRadius = UDim.new(0, 3) }, hueCur)
+	create("UIStroke", { Color = BLACK, Thickness = 1.5 }, hueCur)
+
+	local svHit = create("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.fromScale(1, 1), ZIndex = 3 }, sv)
+	local hueHit = create("TextButton", {
+		BackgroundTransparency = 1,
+		Text = "",
+		Position = UDim2.fromOffset(-5, 0),
+		Size = UDim2.new(1, 10, 1, 0),
+		ZIndex = 3,
+	}, hue)
+
+	local function refresh(fire)
+		sv.BackgroundColor3 = Color3.fromHSV(h, 1, 1)
+		svCur.Position = UDim2.fromScale(s, 1 - v)
+		hueCur.Position = UDim2.fromScale(0.5, h)
+		if fire then onChange(Color3.fromHSV(h, s, v)) end
+	end
+
+	dragArea(svHit, sv, function(rx, ry)
+		s, v = rx, 1 - ry
+		refresh(true)
+	end)
+	dragArea(hueHit, hue, function(_, ry)
+		h = math.min(ry, 0.9999)
+		refresh(true)
+	end)
+
+	refresh(false)
+	return {
+		set = function(c)
+			h, s, v = c:ToHSV()
+			refresh(false)
+		end,
+	}
+end
+
+-- попап выбора цвета (универсальный). onBack — куда вернуться по "Готово"
+local function pickColor(title, initial, onChange, onBack)
+	local p = showPopup(250, 290, title)
+	local hexBox
+	local picker = colorPicker(p, 28, 42, 164, function(c)
+		onChange(c)
+		hexBox.Text = c:ToHex()
+	end)
+	picker.set(initial)
+	hexBox = create("TextBox", {
+		Position = UDim2.fromOffset(28, 212),
+		Size = UDim2.fromOffset(194, 30),
+		Text = initial:ToHex(),
+		PlaceholderText = "HEX",
+		TextSize = 16,
+		ClearTextOnFocus = false,
+		BorderSizePixel = 0,
+	}, p)
+	bind(hexBox, "BackgroundColor3", "Panel")
+	bind(hexBox, "TextColor3", "Text")
+	bind(hexBox, "Font", "Font")
+	corner(hexBox)
+	hexBox.FocusLost:Connect(function()
+		local c = parseHex(hexBox.Text)
+		if c then picker.set(c) onChange(c) end
+	end)
+	local done = button(p, "Готово", function()
+		if onBack then onBack() else closePopup() end
+	end)
+	done.Position = UDim2.fromOffset(28, 248)
+	done.Size = UDim2.fromOffset(194, 32)
+end
+
+---------------------------------------------------------------------
+-- ЛОГИКА: ДВИЖЕНИЕ
+---------------------------------------------------------------------
+local State = { Walk = 16, Jump = 50, WalkOn = false, JumpOn = false, FlySpeed = 60, Flying = false }
+
+local function getHum()
+	local c = player.Character
+	return c and c:FindFirstChildOfClass("Humanoid")
+end
+local function getRoot()
+	local c = player.Character
+	return c and c:FindFirstChild("HumanoidRootPart")
+end
+
+track(RS.Heartbeat:Connect(function()
+	local hum = getHum()
+	if not hum then return end
+	if State.WalkOn then hum.WalkSpeed = State.Walk end
+	if State.JumpOn then
+		hum.UseJumpPower = true
+		hum.JumpPower = State.Jump
+	end
+end))
+
+---------------------------------------------------------------------
+-- ЛОГИКА: ПОЛЁТ (плавный, ПК + телефон)
+---------------------------------------------------------------------
+local controls
+task.spawn(function()
+	local ps = player:WaitForChild("PlayerScripts", 10)
+	local pm = ps and ps:WaitForChild("PlayerModule", 10)
+	if pm then
+		local ok, res = pcall(function() return require(pm):GetControls() end)
+		if ok then controls = res end
+	end
 end)
 
-slider(playerPage, "JumpPower", 0, 150, 50, function(value)
-    local hum = getHumanoid()
-    if hum then
-        hum.UseJumpPower = true
-        hum.JumpPower = value
-    end
-end)
-
-button(playerPage, "Heal Character", function()
-    local hum = getHumanoid()
-    if hum then hum.Health = hum.MaxHealth end
-end)
-
-button(playerPage, "Reset Character", function()
-    local hum = getHumanoid()
-    if hum then hum.Health = 0 end
-end)
-
-section(movementPage, "FLIGHT")
-label(movementPage, "PC: WASD + Space/Ctrl. Mobile: joystick + UP/DOWN.")
-
-local flying = false
-local flySpeed = 60
-local flyConnection
-local bodyVelocity
-local bodyGyro
-local verticalDirection = 0
-
-local mobileFlyFrame = make("Frame", {
-    Name = "MobileFlyControls",
-    AnchorPoint = Vector2.new(1, 1),
-    Position = UDim2.new(1, -18, 1, -115),
-    Size = UDim2.fromOffset(118, 48),
-    BackgroundTransparency = 1,
-    Visible = false,
-    ZIndex = 20
-}, gui)
-
-local function mobileFlyButton(text, x)
-    local b = make("TextButton", {
-        Position = UDim2.fromOffset(x, 0),
-        Size = UDim2.fromOffset(55, 42),
-        BackgroundColor3 = ACCENT,
-        BorderSizePixel = 0,
-        Text = text,
-        TextColor3 = Color3.new(1, 1, 1),
-        Font = Enum.Font.GothamBold,
-        TextSize = 12,
-        ZIndex = 21
-    }, mobileFlyFrame)
-    round(b, 8)
-    return b
-end
-
-local mobileUp = mobileFlyButton("UP", 0)
-local mobileDown = mobileFlyButton("DOWN", 61)
-
-local function connectVerticalButton(buttonObject, direction)
-    buttonObject.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.Touch
-            or input.UserInputType == Enum.UserInputType.MouseButton1 then
-            verticalDirection = direction
-        end
-    end)
-end
-
-connectVerticalButton(mobileUp, 1)
-connectVerticalButton(mobileDown, -1)
-
-UIS.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.Touch
-        or input.UserInputType == Enum.UserInputType.MouseButton1 then
-        verticalDirection = 0
-    end
-end)
+local flyConn, bv, bg
+local flyTgl
 
 local function stopFly()
-    flying = false
-    verticalDirection = 0
-    mobileFlyFrame.Visible = false
+	State.Flying = false
+	if flyConn then flyConn:Disconnect() flyConn = nil end
+	if bv then bv:Destroy() bv = nil end
+	if bg then bg:Destroy() bg = nil end
+	local hum = getHum()
+	if hum then
+		hum.PlatformStand = false
+		hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+	end
+end
 
-    if flyConnection then
-        flyConnection:Disconnect()
-        flyConnection = nil
-    end
-
-    if bodyVelocity then
-        bodyVelocity:Destroy()
-        bodyVelocity = nil
-    end
-
-    if bodyGyro then
-        bodyGyro:Destroy()
-        bodyGyro = nil
-    end
+local function getMoveVector()
+	if controls then
+		local ok, mv = pcall(function() return controls:GetMoveVector() end)
+		if ok and mv then return mv end
+	end
+	local x, z = 0, 0
+	if UIS:IsKeyDown(Enum.KeyCode.D) then x += 1 end
+	if UIS:IsKeyDown(Enum.KeyCode.A) then x -= 1 end
+	if UIS:IsKeyDown(Enum.KeyCode.S) then z += 1 end
+	if UIS:IsKeyDown(Enum.KeyCode.W) then z -= 1 end
+	return Vector3.new(x, 0, z)
 end
 
 local function startFly()
-    if flying then
-        stopFly()
-        return
-    end
+	local root, hum = getRoot(), getHum()
+	if not root or not hum then return false end
+	stopFly()
+	State.Flying = true
+	hum.PlatformStand = true
 
-    local root = getRoot()
-    local hum = getHumanoid()
-    if not root or not hum then return end
+	bv = create("BodyVelocity", { MaxForce = Vector3.new(1e9, 1e9, 1e9), Velocity = Vector3.zero }, root)
+	bg = create("BodyGyro", { MaxTorque = Vector3.new(1e9, 1e9, 1e9), P = 1e4, D = 600, CFrame = root.CFrame }, root)
 
-    flying = true
-    mobileFlyFrame.Visible = UIS.TouchEnabled
+	local vel = Vector3.zero
+	flyConn = RS.RenderStepped:Connect(function(dt)
+		if not root.Parent then
+			stopFly()
+			if flyTgl then flyTgl(false) end
+			return
+		end
+		local cam = workspace.CurrentCamera
+		local mv = getMoveVector()
+		-- летим туда, куда смотрит камера (вверх/вниз тоже)
+		local dir = cam.CFrame:VectorToWorldSpace(Vector3.new(mv.X, 0, mv.Z))
 
-    bodyVelocity = Instance.new("BodyVelocity")
-    bodyVelocity.Name = "LizaHubFlyVelocity"
-    bodyVelocity.MaxForce = Vector3.new(1e7, 1e7, 1e7)
-    bodyVelocity.P = 1e4
-    bodyVelocity.Velocity = Vector3.zero
-    bodyVelocity.Parent = root
+		if UIS:GetFocusedTextBox() == nil then
+			if UIS:IsKeyDown(Enum.KeyCode.Space) or UIS:IsKeyDown(Enum.KeyCode.E) then dir += Vector3.new(0, 1, 0) end
+			if UIS:IsKeyDown(Enum.KeyCode.LeftControl) or UIS:IsKeyDown(Enum.KeyCode.Q) then dir -= Vector3.new(0, 1, 0) end
+		end
+		if dir.Magnitude > 1 then dir = dir.Unit end
 
-    bodyGyro = Instance.new("BodyGyro")
-    bodyGyro.Name = "LizaHubFlyGyro"
-    bodyGyro.MaxTorque = Vector3.new(1e7, 1e7, 1e7)
-    bodyGyro.P = 1e4
-    bodyGyro.CFrame = root.CFrame
-    bodyGyro.Parent = root
+		vel = vel:Lerp(dir * State.FlySpeed, 1 - math.exp(-dt * 8))
+		bv.Velocity = vel
 
-    flyConnection = RunService.RenderStepped:Connect(function()
-        local currentRoot = getRoot()
-        local camera = workspace.CurrentCamera
-
-        if not flying or not currentRoot or not camera or not bodyVelocity or not bodyGyro then
-            stopFly()
-            return
-        end
-
-        local direction = Vector3.zero
-
-        if UIS.TouchEnabled then
-            local currentHumanoid = getHumanoid()
-            if currentHumanoid then direction += currentHumanoid.MoveDirection end
-        else
-            if UIS:IsKeyDown(Enum.KeyCode.W) then direction += camera.CFrame.LookVector end
-            if UIS:IsKeyDown(Enum.KeyCode.S) then direction -= camera.CFrame.LookVector end
-            if UIS:IsKeyDown(Enum.KeyCode.A) then direction -= camera.CFrame.RightVector end
-            if UIS:IsKeyDown(Enum.KeyCode.D) then direction += camera.CFrame.RightVector end
-        end
-
-        local up = UIS:IsKeyDown(Enum.KeyCode.Space) and 1 or 0
-        local down = UIS:IsKeyDown(Enum.KeyCode.LeftControl) and 1 or 0
-        direction += Vector3.new(0, up - down + verticalDirection, 0)
-
-        if direction.Magnitude > 0 then direction = direction.Unit end
-        bodyVelocity.Velocity = direction * flySpeed
-        bodyGyro.CFrame = camera.CFrame
-    end)
+		local look = cam.CFrame.LookVector
+		local flat = Vector3.new(look.X, 0, look.Z)
+		if flat.Magnitude < 0.01 then flat = root.CFrame.LookVector end
+		local lean = math.rad(35) * math.clamp(vel.Magnitude / math.max(State.FlySpeed, 1), 0, 1)
+		bg.CFrame = CFrame.lookAt(root.Position, root.Position + flat) * CFrame.Angles(-lean, 0, 0)
+	end)
+	return true
 end
 
-button(movementPage, "Toggle Fly", startFly)
-button(movementPage, "Stop Fly", stopFly)
-slider(movementPage, "Fly Speed", 10, 200, 60, function(value)
-    flySpeed = value
-end)
-
-local customObjects = {}
-local objectShape = "Block"
-local objectMode = "Place"
-local toolMode = "TP"
-local customToolName = "Liza Tool"
-
-local function trackObject(object)
-    table.insert(customObjects, object)
+local function toggleFly()
+	if State.Flying then stopFly() else startFly() end
+	if flyTgl then flyTgl(State.Flying) end
 end
 
-local function getTargetPosition()
-    local camera = workspace.CurrentCamera
-    if not camera then return nil end
+track(player.CharacterAdded:Connect(function()
+	if State.Flying then
+		stopFly()
+		if flyTgl then flyTgl(false) end
+	end
+end))
 
-    local mouseLocation = UIS:GetMouseLocation()
-    local ray = camera:ViewportPointToRay(mouseLocation.X, mouseLocation.Y)
+---------------------------------------------------------------------
+-- ЛОГИКА: СВОИ ТУЛЫ
+---------------------------------------------------------------------
+local Created, nextId = {}, 0
+local AutoGive = true
 
-    local params = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    params.FilterDescendantsInstances = {getCharacter()}
+local Actions = {
+	["Нет"] = function() end,
+	["Рывок"] = function(root)
+		root.AssemblyLinearVelocity = root.CFrame.LookVector * 120 + Vector3.new(0, 20, 0)
+	end,
+	["Телепорт"] = function(root)
+		if mouse.Hit then root.CFrame = CFrame.new(mouse.Hit.Position + Vector3.new(0, 3, 0)) end
+	end,
+	["Супер-прыжок"] = function(root)
+		local v = root.AssemblyLinearVelocity
+		root.AssemblyLinearVelocity = Vector3.new(v.X, 100, v.Z)
+	end,
+	["Выстрел"] = function(root)
+		local p = create("Part", {
+			Shape = Enum.PartType.Ball,
+			Size = Vector3.new(1.5, 1.5, 1.5),
+			Material = Enum.Material.Neon,
+			Color = Theme.Accent,
+			CanCollide = false,
+			CFrame = root.CFrame * CFrame.new(0, 0, -3),
+		}, workspace)
+		create("BodyForce", { Force = Vector3.new(0, p:GetMass() * workspace.Gravity, 0) }, p)
+		p.AssemblyLinearVelocity = workspace.CurrentCamera.CFrame.LookVector * 150
+		Debris:AddItem(p, 3)
+	end,
+}
+local ActionNames = { "Нет", "Рывок", "Телепорт", "Супер-прыжок", "Выстрел" }
+local ShapeNames = { "Блок", "Шар", "Цилиндр" }
 
-    local result = workspace:Raycast(ray.Origin, ray.Direction * 500, params)
-    if result then return result.Position end
-    return ray.Origin + ray.Direction * 30
+local function buildTool(spec)
+	local tool = create("Tool", {
+		Name = spec.Name,
+		ToolTip = spec.Name,
+		RequiresHandle = true,
+		CanBeDropped = false,
+	}, nil)
+	tool:SetAttribute("LizaId", spec.Id)
+	local h = create("Part", {
+		Name = "Handle",
+		Size = Vector3.new(spec.X, spec.Y, spec.Z),
+		Color = spec.Color,
+		Material = Enum.Material.SmoothPlastic,
+	}, tool)
+	if spec.Shape == "Шар" then h.Shape = Enum.PartType.Ball
+	elseif spec.Shape == "Цилиндр" then h.Shape = Enum.PartType.Cylinder end
+	tool.Activated:Connect(function()
+		local root = getRoot()
+		if root then Actions[spec.Action](root) end
+	end)
+	return tool
 end
 
-local function makeObjectPart(position)
-    local part = Instance.new("Part")
-    part.Name = "LizaHubObject"
-    part.Size = Vector3.new(2, 2, 2)
-    part.Material = Enum.Material.Neon
-    part.Color = ACCENT
-    part.Anchored = objectMode == "Place"
-    part.CanCollide = true
-
-    if objectShape == "Sphere" then
-        part.Shape = Enum.PartType.Ball
-    elseif objectShape == "Circle" then
-        part.Shape = Enum.PartType.Cylinder
-        part.Size = Vector3.new(0.5, 2, 2)
-    end
-
-    part.Position = position
-    part.Parent = workspace
-    trackObject(part)
-    return part
+local function removeToolById(id)
+	local function scan(c)
+		if not c then return end
+		for _, t in ipairs(c:GetChildren()) do
+			if t:IsA("Tool") and t:GetAttribute("LizaId") == id then t:Destroy() end
+		end
+	end
+	scan(player:FindFirstChildOfClass("Backpack"))
+	scan(player.Character)
 end
 
-section(itemsPage, "CUSTOM TOOL")
-
-local toolNameBox = textBox(itemsPage, "Tool name", customToolName, function(value)
-    if value:gsub("%s", "") ~= "" then customToolName = value end
-end)
-
-local toolModeLabel = label(itemsPage, "Current mode: TP")
-
-button(itemsPage, "Change Mode", function()
-    toolMode = toolMode == "TP" and "Throw" or toolMode == "Throw" and "Place" or "TP"
-    toolModeLabel.Text = "Current mode: " .. toolMode
-end)
-
-button(itemsPage, "Give Tool", function()
-    local backpack = player:FindFirstChildOfClass("Backpack")
-    if not backpack then return end
-
-    local tool = Instance.new("Tool")
-    tool.Name = customToolName
-    tool.RequiresHandle = true
-    tool.CanBeDropped = true
-
-    local handle = Instance.new("Part")
-    handle.Name = "Handle"
-    handle.Size = Vector3.new(1, 1, 1)
-    handle.Material = Enum.Material.Neon
-    handle.Color = ACCENT
-    handle.CanCollide = false
-    handle.Massless = true
-    handle.Parent = tool
-
-    tool.Activated:Connect(function()
-        local position = getTargetPosition()
-        if not position then return end
-
-        if toolMode == "TP" then
-            local root = getRoot()
-            if root then root.CFrame = CFrame.new(position + Vector3.new(0, 3, 0)) end
-        elseif toolMode == "Throw" then
-            local root = getRoot()
-            if not root then return end
-            local part = makeObjectPart(root.Position + root.CFrame.LookVector * 4)
-            part.Anchored = false
-            part.AssemblyLinearVelocity = root.CFrame.LookVector * 100 + Vector3.new(0, 25, 0)
-        else
-            makeObjectPart(position)
-        end
-    end)
-
-    tool.Parent = backpack
-    local hum = getHumanoid()
-    if hum then hum:EquipTool(tool) end
-end)
-
-section(buildingPage, "BUILD OBJECTS")
-
-local rgbEnabled = false
-local rgbConnection
-local rgbObjects = {}
-
-local function registerRGB(object)
-    rgbObjects[object] = true
+local function giveTool(spec)
+	local bp = player:FindFirstChildOfClass("Backpack")
+	if not bp then return end
+	removeToolById(spec.Id)
+	buildTool(spec).Parent = bp
 end
 
-button(buildingPage, "Create Neon Orb", function()
-    local root = getRoot()
-    if not root then return end
+track(player.CharacterAdded:Connect(function()
+	if not AutoGive then return end
+	task.wait(0.6)
+	for _, spec in ipairs(Created) do giveTool(spec) end
+end))
 
-    local orb = Instance.new("Part")
-    orb.Name = "LizaHubNeonOrb"
-    orb.Shape = Enum.PartType.Ball
-    orb.Size = Vector3.new(2, 2, 2)
-    orb.Material = Enum.Material.Neon
-    orb.Color = ACCENT
-    orb.CanCollide = false
-    orb.Anchored = false
-    orb.CFrame = root.CFrame * CFrame.new(0, 3, -4)
-    orb.Parent = workspace
-
-    local light = Instance.new("PointLight")
-    light.Color = ACCENT
-    light.Brightness = 2
-    light.Range = 12
-    light.Parent = orb
-
-    local force = Instance.new("BodyForce")
-    force.Force = Vector3.new(0, orb:GetMass() * workspace.Gravity, 0)
-    force.Parent = orb
-
-    registerRGB(orb)
-    trackObject(orb)
-end)
-
-button(buildingPage, "Create Build Part", function()
-    local root = getRoot()
-    if not root then return end
-
-    local part = Instance.new("Part")
-    part.Name = "LizaHubBuildPart"
-    part.Size = Vector3.new(4, 1, 4)
-    part.Material = Enum.Material.Neon
-    part.Color = ACCENT
-    part.Anchored = true
-    part.CanCollide = true
-    part.CFrame = root.CFrame * CFrame.new(0, 1, -6)
-    part.Parent = workspace
-
-    registerRGB(part)
-    trackObject(part)
-end)
-
-button(buildingPage, "Toggle RGB", function()
-    rgbEnabled = not rgbEnabled
-
-    if rgbConnection then
-        rgbConnection:Disconnect()
-        rgbConnection = nil
-    end
-
-    if rgbEnabled then
-        rgbConnection = RunService.Heartbeat:Connect(function()
-            local color = Color3.fromHSV((os.clock() * 0.25) % 1, 1, 1)
-
-            for object in pairs(rgbObjects) do
-                if object and object.Parent then
-                    object.Color = color
-                    local light = object:FindFirstChildOfClass("PointLight")
-                    if light then light.Color = color end
-                else
-                    rgbObjects[object] = nil
-                end
-            end
-        end)
-    else
-        for object in pairs(rgbObjects) do
-            if object and object.Parent then
-                object.Color = ACCENT
-                local light = object:FindFirstChildOfClass("PointLight")
-                if light then light.Color = ACCENT end
-            end
-        end
-    end
-end)
-
-button(buildingPage, "Remove My Build Objects", function()
-    for _, object in ipairs(customObjects) do
-        if object and object.Parent then object:Destroy() end
-    end
-
-    for object in pairs(rgbObjects) do
-        if object and object.Parent and
-            (object.Name == "LizaHubNeonOrb" or object.Name == "LizaHubBuildPart") then
-            object:Destroy()
-        end
-        rgbObjects[object] = nil
-    end
-
-    table.clear(customObjects)
-end)
-
-section(funPage, "VISUAL EFFECTS")
-
-button(funPage, "Create Sparkles", function()
-    local root = getRoot()
-    if not root then return end
-
-    local old = root:FindFirstChild("LizaHubSparkles")
-    if old then old:Destroy() end
-
-    local particles = Instance.new("ParticleEmitter")
-    particles.Name = "LizaHubSparkles"
-    particles.Texture = "rbxasset://textures/particles/sparkles_main.dds"
-    particles.Color = ColorSequence.new(ACCENT)
-    particles.Rate = 18
-    particles.Lifetime = NumberRange.new(1, 2)
-    particles.Speed = NumberRange.new(1, 3)
-    particles.SpreadAngle = Vector2.new(180, 180)
-    particles.Parent = root
-end)
-
-button(funPage, "Remove Sparkles", function()
-    local character = getCharacter()
-    if not character then return end
-
-    for _, object in ipairs(character:GetDescendants()) do
-        if object.Name == "LizaHubSparkles" then object:Destroy() end
-    end
-end)
-
-button(funPage, "Toggle Orange Lighting", function()
-    local effect = Lighting:FindFirstChild("LizaHubOrangeTint")
-
-    if effect then
-        effect:Destroy()
-    else
-        effect = Instance.new("ColorCorrectionEffect")
-        effect.Name = "LizaHubOrangeTint"
-        effect.TintColor = Color3.fromRGB(255, 205, 165)
-        effect.Saturation = 0.15
-        effect.Parent = Lighting
-    end
-end)
-
-button(funPage, "Toggle Bloom", function()
-    local effect = Lighting:FindFirstChild("LizaHubBloom")
-
-    if effect then
-        effect:Destroy()
-    else
-        effect = Instance.new("BloomEffect")
-        effect.Name = "LizaHubBloom"
-        effect.Intensity = 0.8
-        effect.Size = 24
-        effect.Threshold = 1
-        effect.Parent = Lighting
-    end
-end)
-
-button(funPage, "Remove LizaHub Lighting", function()
-    for _, name in ipairs({"LizaHubOrangeTint", "LizaHubBloom"}) do
-        local effect = Lighting:FindFirstChild(name)
-        if effect then effect:Destroy() end
-    end
-end)
-
-section(settingsPage, "MENU APPEARANCE")
-
-local titleBox = textBox(settingsPage, "Menu title", HUB_NAME, function(value)
-    if value:gsub("%s", "") ~= "" then
-        HUB_NAME = value
-        titleLabel.Text = HUB_NAME
-        splashTitle.Text = HUB_NAME
-    end
-end)
-
-local function updateAccent(color)
-    local oldAccent = ACCENT
-    ACCENT = color
-
-    titleLabel.TextColor3 = color
-    splashTitle.TextColor3 = color
-    mainStroke.Color = color
-    continueButton.BackgroundColor3 = color
-
-    if reopenButton then
-        reopenButton.TextColor3 = color
-        for _, stroke in ipairs(reopenButton:GetChildren()) do
-            if stroke:IsA("UIStroke") then stroke.Color = color end
-        end
-    end
-
-    for tabName, tabButton in pairs(tabButtons) do
-        tabButton.BackgroundColor3 =
-            tabName == currentTab and color or Color3.fromRGB(42, 43, 52)
-    end
-
-    for _, object in ipairs(gui:GetDescendants()) do
-        if object:IsA("ScrollingFrame") then
-            object.ScrollBarImageColor3 = color
-        elseif object:IsA("TextLabel") and object.TextColor3 == oldAccent then
-            object.TextColor3 = color
-        elseif object:IsA("TextButton") and object.TextColor3 == oldAccent then
-            object.TextColor3 = color
-        elseif object:IsA("Frame") and object.Name == "Fill" then
-            object.BackgroundColor3 = color
-        elseif object:IsA("UIStroke") then
-            object.Color = color
-        end
-    end
-
-    for object in pairs(rgbObjects) do
-        if object and object.Parent and not rgbEnabled then
-            object.Color = color
-            local light = object:FindFirstChildOfClass("PointLight")
-            if light then light.Color = color end
-        end
-    end
+---------------------------------------------------------------------
+-- VIP: логика (радуга / монохром / кастом)
+---------------------------------------------------------------------
+local function strokeText(o, on)
+	if o:IsA("TextLabel") or o:IsA("TextButton") then
+		o.TextStrokeColor3 = BLACK
+		o.TextStrokeTransparency = on and 0.55 or 1
+	end
 end
 
-local paletteHue, paletteSat, paletteVal = 0.075, 0.86, 1
-local paletteDragging = false
-local hueDragging = false
-
-section(settingsPage, "COLOR PALETTE")
-
-local palette = make("TextButton", {
-    Name = "RGBPalette",
-    Size = UDim2.new(1, -2, 0, 105),
-    BackgroundColor3 = Color3.fromHSV(paletteHue, 1, 1),
-    BorderSizePixel = 0,
-    Text = "",
-    AutoButtonColor = false,
-    ClipsDescendants = true,
-    ZIndex = 4
-}, settingsPage)
-round(palette, 7)
-
-local whiteOverlay = make("Frame", {
-    Size = UDim2.fromScale(1, 1),
-    BackgroundColor3 = Color3.new(1, 1, 1),
-    BorderSizePixel = 0,
-    ZIndex = 5
-}, palette)
-
-make("UIGradient", {
-    Color = ColorSequence.new(Color3.new(1, 1, 1)),
-    Transparency = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, 0),
-        NumberSequenceKeypoint.new(1, 1)
-    })
-}, whiteOverlay)
-
-local blackOverlay = make("Frame", {
-    Size = UDim2.fromScale(1, 1),
-    BackgroundColor3 = Color3.new(0, 0, 0),
-    BorderSizePixel = 0,
-    ZIndex = 6
-}, palette)
-
-make("UIGradient", {
-    Rotation = 90,
-    Color = ColorSequence.new(Color3.new(0, 0, 0)),
-    Transparency = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, 1),
-        NumberSequenceKeypoint.new(1, 0)
-    })
-}, blackOverlay)
-
-local paletteCursor = make("Frame", {
-    Name = "PaletteCursor",
-    Size = UDim2.fromOffset(12, 12),
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    Position = UDim2.fromScale(paletteSat, 1 - paletteVal),
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    ZIndex = 7
-}, palette)
-round(paletteCursor, 6)
-outline(paletteCursor, Color3.new(1, 1, 1), 2)
-
-local hueBar = make("TextButton", {
-    Name = "HueBar",
-    Size = UDim2.new(1, -2, 0, 17),
-    BackgroundColor3 = Color3.new(1, 1, 1),
-    BorderSizePixel = 0,
-    Text = "",
-    AutoButtonColor = false,
-    ZIndex = 4
-}, settingsPage)
-round(hueBar, 6)
-
-make("UIGradient", {
-    Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 0, 0)),
-        ColorSequenceKeypoint.new(0.17, Color3.fromRGB(255, 255, 0)),
-        ColorSequenceKeypoint.new(0.33, Color3.fromRGB(0, 255, 0)),
-        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 255, 255)),
-        ColorSequenceKeypoint.new(0.67, Color3.fromRGB(0, 0, 255)),
-        ColorSequenceKeypoint.new(0.83, Color3.fromRGB(255, 0, 255)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 0, 0))
-    })
-}, hueBar)
-
-local colorPreview = make("Frame", {
-    Size = UDim2.new(1, -2, 0, 25),
-    BackgroundColor3 = ACCENT,
-    BorderSizePixel = 0,
-    ZIndex = 4
-}, settingsPage)
-round(colorPreview, 7)
-
-local function applyPalette()
-    local color = Color3.fromHSV(paletteHue, paletteSat, paletteVal)
-    palette.BackgroundColor3 = Color3.fromHSV(paletteHue, 1, 1)
-    paletteCursor.Position = UDim2.fromScale(paletteSat, 1 - paletteVal)
-    colorPreview.BackgroundColor3 = color
-    updateAccent(color)
+local function vipClear()
+	for _, tg in ipairs(vipTargets) do
+		local g = tg.inst:FindFirstChild("LizaVip")
+		if g then g:Destroy() end
+		strokeText(tg.inst, false)
+	end
+	strokeText(titleLabel, false)
+	strokeText(closeBtn, false)
 end
 
-local function setPalettePosition(x, y, hueOnly)
-    if hueOnly then
-        paletteHue = math.clamp(
-            (x - hueBar.AbsolutePosition.X) / math.max(hueBar.AbsoluteSize.X, 1),
-            0, 1
-        )
-    else
-        paletteSat = math.clamp(
-            (x - palette.AbsolutePosition.X) / math.max(palette.AbsoluteSize.X, 1),
-            0, 1
-        )
-        paletteVal = 1 - math.clamp(
-            (y - palette.AbsolutePosition.Y) / math.max(palette.AbsoluteSize.Y, 1),
-            0, 1
-        )
-    end
-    applyPalette()
+local function sortedStops()
+	local t = {}
+	for _, s in ipairs(Vip.stops) do table.insert(t, s) end
+	table.sort(t, function(a, b) return a.t < b.t end)
+	return t
 end
 
-palette.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then
-        paletteDragging = true
-        hueDragging = false
-        setPalettePosition(input.Position.X, input.Position.Y, false)
-    end
-end)
-
-hueBar.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then
-        paletteDragging = true
-        hueDragging = true
-        setPalettePosition(input.Position.X, input.Position.Y, true)
-    end
-end)
-
-UIS.InputChanged:Connect(function(input)
-    if paletteDragging and (input.UserInputType == Enum.UserInputType.MouseMovement
-        or input.UserInputType == Enum.UserInputType.Touch) then
-        setPalettePosition(input.Position.X, input.Position.Y, hueDragging)
-    end
-end)
-
-UIS.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then
-        paletteDragging = false
-    end
-end)
-
-button(settingsPage, "Apply Color", applyPalette)
-
-button(settingsPage, "Reset Orange", function()
-    paletteHue, paletteSat, paletteVal = 0.075, 0.86, 1
-    applyPalette()
-end)
-
-section(settingsPage, "SOUND SETTINGS")
-
-textBox(settingsPage, "Click sound ID", CLICK_SOUND_ID, function(value)
-    local id = value:match("%d+")
-    if id then CLICK_SOUND_ID = id end
-end)
-
-textBox(settingsPage, "Slider tick sound ID", SLIDER_SOUND_ID, function(value)
-    local id = value:match("%d+")
-    if id then SLIDER_SOUND_ID = id end
-end)
-
-slider(settingsPage, "UI Sound Volume %", 0, 100, 45, function(value)
-    UI_SOUND_VOLUME = value / 100
-end)
-
-button(settingsPage, "Test Click Sound", function()
-    playUISound(CLICK_SOUND_ID)
-end)
-
-button(settingsPage, "Test Slider Sound", function()
-    playUISound(SLIDER_SOUND_ID)
-end)
-
-section(settingsPage, "BACKGROUND IMAGE")
-
-textBox(settingsPage, "Roblox image asset ID", "", function(value)
-    local id = value:match("%d+")
-    BACKGROUND_IMAGE = id and ("rbxassetid://" .. id) or ""
-end)
-
-button(settingsPage, "Apply Background Image", function()
-    if BACKGROUND_IMAGE ~= "" then
-        backgroundImage.Image = BACKGROUND_IMAGE
-        backgroundImage.Visible = true
-    end
-end)
-
-button(settingsPage, "Remove Background Image", function()
-    BACKGROUND_IMAGE = ""
-    backgroundImage.Image = ""
-end)
-
-button(settingsPage, "Dark Background", function()
-    BACKGROUND = Color3.fromRGB(22, 23, 29)
-    main.BackgroundColor3 = BACKGROUND
-end)
-
-button(settingsPage, "Light Background", function()
-    BACKGROUND = Color3.fromRGB(48, 49, 58)
-    main.BackgroundColor3 = BACKGROUND
-end)
-
-local function fitScreen()
-    local camera = workspace.CurrentCamera
-    if not camera then return end
-
-    local viewport = camera.ViewportSize
-    local fit = math.min((viewport.X - 24) / 570, (viewport.Y - 24) / 430, 1)
-    scaleObject.Scale = math.max(0.35, fit * MENU_SCALE)
+-- цвет кастома: "пинг-понг" по таймлайну 0..1, чтобы переливание было без шва.
+-- Скорость 0 -> все цвета таймлайна ровно помещаются в кнопку.
+local function sampleCustom(p, clock)
+	local st = Vip.sorted or sortedStops()
+	local u = (p + clock * Vip.speed) % 2
+	if u > 1 then u = 2 - u end
+	if u <= st[1].t then return st[1].c end
+	local last = st[#st]
+	if u >= last.t then return last.c end
+	for i = 1, #st - 1 do
+		local a, b = st[i], st[i + 1]
+		if u >= a.t and u <= b.t then
+			local span = b.t - a.t
+			return a.c:Lerp(b.c, span > 1e-6 and (u - a.t) / span or 0)
+		end
+	end
+	return last.c
 end
 
-slider(settingsPage, "Menu Scale %", 60, 120, 100, function(value)
-    MENU_SCALE = value / 100
-    fitScreen()
-end)
-
-section(settingsPage, "CONFIG MANAGER")
-label(settingsPage, "Configs created here remain available until this session ends.")
-
-local configs = {}
-local selectedConfig = "Default"
-local autoLoadConfig = false
-
-textBox(settingsPage, "Config name", "MyConfig", function(value)
-    if value:gsub("%s", "") ~= "" then selectedConfig = value end
-end)
-
-local autoLoadButton
-
-local function captureConfig()
-    return {
-        title = HUB_NAME,
-        accent = ACCENT,
-        background = BACKGROUND,
-        backgroundImage = BACKGROUND_IMAGE,
-        scale = MENU_SCALE,
-        selectedTab = selectedTab,
-        autoLoad = autoLoadConfig,
-        clickSound = CLICK_SOUND_ID,
-        sliderSound = SLIDER_SOUND_ID,
-        soundVolume = UI_SOUND_VOLUME
-    }
+local function vipSample(p, clock)
+	if Vip.mode == "rainbow" then
+		return Color3.fromHSV((p + clock * 0.25) % 1, 0.85, 1)
+	elseif Vip.mode == "mono" then
+		local w = 0.5 + 0.5 * math.sin((p + clock * 0.2) * math.pi * 2)
+		local g = 0.04 + 0.92 * w
+		return Color3.new(g, g, g)
+	end
+	return sampleCustom(p, clock)
 end
 
-local function applyConfig(config)
-    if not config then return end
-
-    HUB_NAME = config.title or HUB_NAME
-    BACKGROUND = config.background or BACKGROUND
-    BACKGROUND_IMAGE = config.backgroundImage or ""
-    MENU_SCALE = config.scale or MENU_SCALE
-    autoLoadConfig = config.autoLoad or false
-    CLICK_SOUND_ID = config.clickSound or CLICK_SOUND_ID
-    SLIDER_SOUND_ID = config.sliderSound or SLIDER_SOUND_ID
-    UI_SOUND_VOLUME = config.soundVolume or UI_SOUND_VOLUME
-
-    titleLabel.Text = HUB_NAME
-    titleBox.Text = HUB_NAME
-    splashTitle.Text = HUB_NAME
-    main.BackgroundColor3 = BACKGROUND
-    backgroundImage.Image = BACKGROUND_IMAGE
-    backgroundImage.Visible = BACKGROUND_IMAGE ~= ""
-
-    updateAccent(config.accent or ACCENT)
-    fitScreen()
-
-    if config.selectedTab and pages[config.selectedTab] then
-        selectTab(config.selectedTab)
-    end
-
-    if autoLoadButton then
-        autoLoadButton.Text = autoLoadConfig and "Auto Load Config: ON" or "Auto Load Config: OFF"
-    end
+local function buildSeq(fn)
+	local kps = {}
+	for k = 0, 15 do
+		local p = k / 15
+		table.insert(kps, ColorSequenceKeypoint.new(p, fn(p)))
+	end
+	return ColorSequence.new(kps)
 end
 
-button(settingsPage, "Save Config", function()
-    if selectedConfig:gsub("%s", "") == "" then selectedConfig = "MyConfig" end
-    configs[selectedConfig] = captureConfig()
-end)
-
-button(settingsPage, "Load Config", function()
-    local config = configs[selectedConfig]
-    if config then applyConfig(config) end
-end)
-
-button(settingsPage, "Delete Config", function()
-    if selectedConfig ~= "Default" then configs[selectedConfig] = nil end
-end)
-
-autoLoadButton = button(settingsPage, "Auto Load Config: OFF", function()
-    autoLoadConfig = not autoLoadConfig
-    autoLoadButton.Text = autoLoadConfig and "Auto Load Config: ON" or "Auto Load Config: OFF"
-    if autoLoadConfig and configs[selectedConfig] then applyConfig(configs[selectedConfig]) end
-end)
-
-configs.Default = captureConfig()
-
-reopenButton = make("TextButton", {
-    Name = "ReopenButton",
-    AnchorPoint = Vector2.new(0, 0.5),
-    Position = UDim2.new(0, 12, 0.5, 0),
-    Size = UDim2.fromOffset(44, 44),
-    BackgroundColor3 = Color3.fromRGB(31, 32, 40),
-    BorderSizePixel = 0,
-    Text = "L",
-    TextColor3 = ACCENT,
-    TextSize = 20,
-    Font = Enum.Font.GothamBold,
-    Visible = false,
-    ZIndex = 30
-}, gui)
-round(reopenButton, 12)
-outline(reopenButton, ACCENT, 1.5)
-
-fitScreen()
-
-if workspace.CurrentCamera then
-    workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fitScreen)
+local function vipSet(mode)
+	if mode == "rainbow" or mode == "mono" then
+		if not Vip.saved then Vip.saved = snapshot() end
+		local b = BasePalettes[Vip.base]
+		tweenTheme({ Accent = Theme.Accent, Bg = b.Bg, Panel = b.Panel, Text = b.Text })
+	else
+		if Vip.saved then
+			tweenTheme(Vip.saved)
+			Vip.saved = nil
+		end
+	end
+	Vip.mode = mode
+	if mode then
+		strokeText(titleLabel, true)
+		strokeText(closeBtn, true)
+		currentThemeName = "VIP"
+	else
+		vipClear()
+	end
+	applyTheme()
 end
 
-local menuOpen = true
+local vipAcc = 0
+track(RS.RenderStepped:Connect(function(dt)
+	vipAcc += dt
+	if vipAcc < 1 / 30 then return end
+	vipAcc = 0
+	local clock = os.clock()
+	Vip.sorted = sortedStops()
 
-local function hideMenu()
-    if not menuOpen then return end
-    menuOpen = false
-    tween(scaleObject, 0.12, {Scale = scaleObject.Scale * 0.9})
+	if Vip.mode then
+		local seq = buildSeq(function(p) return vipSample(p, clock) end)
+		for i = #vipTargets, 1, -1 do
+			local tg = vipTargets[i]
+			if tg.inst.Parent == nil then
+				table.remove(vipTargets, i)
+			else
+				local g = tg.inst:FindFirstChild("LizaVip")
+				if (not tg.want) or tg.want() then
+					if not g then
+						g = create("UIGradient", { Name = "LizaVip" }, tg.inst)
+						strokeText(tg.inst, true)
+					end
+					g.Color = seq
+				elseif g then
+					g:Destroy()
+					strokeText(tg.inst, false)
+				end
+			end
+		end
+	end
 
-    task.delay(0.13, function()
-        if not menuOpen then
-            main.Visible = false
-            reopenButton.Visible = true
-        end
-    end)
+	if Vip.preview and Vip.preview.Parent then
+		Vip.preview.Color = buildSeq(function(p) return sampleCustom(p, clock) end)
+	end
+end))
+
+---------------------------------------------------------------------
+-- ПОПАПЫ: список, темы, шрифты
+---------------------------------------------------------------------
+local function openList(title, items, onPick)
+	local p = showPopup(300, 270, title)
+	local sc = popupList(p)
+	for i, it in ipairs(items) do
+		local row = create("TextButton", {
+			Size = UDim2.new(1, 0, 0, 38),
+			Text = "",
+			AutoButtonColor = false,
+			BorderSizePixel = 0,
+			LayoutOrder = i,
+		}, sc)
+		bind(row, "BackgroundColor3", "Panel")
+		corner(row)
+		fx(row)
+
+		local x = 10
+		if it.colors then
+			for j, c in ipairs(it.colors) do
+				local sw = create("Frame", {
+					Position = UDim2.fromOffset(10 + (j - 1) * 20, 11),
+					Size = UDim2.fromOffset(16, 16),
+					BackgroundColor3 = c,
+					BorderSizePixel = 0,
+				}, row)
+				create("UICorner", { CornerRadius = UDim.new(0, 4) }, sw)
+				create("UIStroke", { Color = Color3.fromRGB(130, 130, 130), Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, sw)
+			end
+			x = 10 + #it.colors * 20 + 6
+		end
+
+		local rightPad = it.onDelete and 74 or 40
+		local lbl = create("TextLabel", {
+			BackgroundTransparency = 1,
+			Position = UDim2.fromOffset(x, 0),
+			Size = UDim2.new(1, -x - rightPad, 1, 0),
+			Text = it.text,
+			TextSize = 17,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		}, row)
+		bind(lbl, "TextColor3", "Text")
+		if it.font then lbl.Font = it.font else bind(lbl, "Font", "Font") end
+
+		if it.selected then
+			local ck = create("TextLabel", {
+				BackgroundTransparency = 1,
+				AnchorPoint = Vector2.new(1, 0.5),
+				Position = UDim2.new(1, it.onDelete and -40 or -10, 0.5, 0),
+				Size = UDim2.fromOffset(20, 20),
+				Text = "✓",
+				TextSize = 18,
+			}, row)
+			bind(ck, "TextColor3", "Accent")
+			bind(ck, "Font", "Font")
+		end
+
+		row.Activated:Connect(function() onPick(it) end)
+
+		if it.onDelete then
+			local del = create("TextButton", {
+				AnchorPoint = Vector2.new(1, 0.5),
+				Position = UDim2.new(1, -6, 0.5, 0),
+				Size = UDim2.fromOffset(28, 26),
+				Text = "✕",
+				TextSize = 14,
+				TextColor3 = WHITE,
+				BorderSizePixel = 0,
+				BackgroundColor3 = Color3.fromRGB(200, 60, 70),
+			}, row)
+			create("UICorner", { CornerRadius = UDim.new(0, 6) }, del)
+			del.Activated:Connect(it.onDelete)
+		end
+	end
 end
 
-local function showMenu()
-    if menuOpen then return end
-    menuOpen = true
-    reopenButton.Visible = false
-    main.Visible = true
-    fitScreen()
-
-    local targetScale = scaleObject.Scale
-    scaleObject.Scale = targetScale * 0.9
-    tween(scaleObject, 0.16, {Scale = targetScale})
+local function openThemeList()
+	local items = {}
+	for _, t in ipairs(BuiltIn) do
+		table.insert(items, {
+			text = t.text, name = t.text, theme = t.theme,
+			colors = { t.theme.Accent, t.theme.Bg, t.theme.Panel },
+			selected = currentThemeName == t.text,
+		})
+	end
+	for _, t in ipairs(CustomThemes) do
+		table.insert(items, {
+			text = "★ " .. t.text, name = t.text, theme = t.theme,
+			colors = { t.theme.Accent, t.theme.Bg, t.theme.Panel },
+			selected = currentThemeName == t.text,
+			onDelete = function()
+				table.remove(CustomThemes, table.find(CustomThemes, t))
+				openThemeList()
+			end,
+		})
+	end
+	openList("Выбрать тему", items, function(it)
+		currentThemeName = it.name
+		Vip.saved = nil
+		tweenTheme(it.theme)
+		closePopup()
+	end)
 end
 
-closeButton.Activated:Connect(function()
-    playUISound(CLICK_SOUND_ID)
-    hideMenu()
+local function openFontList()
+	local items = {}
+	for _, f in ipairs(FontList) do
+		table.insert(items, { text = f.Name, font = f, selected = Theme.Font == f })
+	end
+	openList("Шрифт", items, function(it)
+		Theme.Font = it.font
+		applyTheme()
+		closePopup()
+	end)
+end
+
+---------------------------------------------------------------------
+-- ПОПАПЫ: VIP (меню) и КАСТОМ (редактор переливания)
+---------------------------------------------------------------------
+local openVipCustom
+openVipCustom = function()
+	local p = showPopup(340, 288, "Кастом")
+	local sc = popupList(p)
+
+	local pv = create("Frame", { Size = UDim2.new(1, 0, 0, 22), BorderSizePixel = 0, BackgroundColor3 = WHITE }, sc)
+	corner(pv)
+	Vip.preview = create("UIGradient", {}, pv)
+
+	slider(sc, "Скорость переливания", 0, 3, Vip.speed, 0.05, 20, function(v) Vip.speed = v end)
+	note(sc, "Таймлайн 0.0 – 1.0: где на кнопке стоит каждый цвет. Скорость 0 — все цвета просто помещаются в кнопку.")
+
+	local holder = create("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+	}, sc)
+	create("UIListLayout", { Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder }, holder)
+
+	local function rebuild()
+		for _, c in ipairs(holder:GetChildren()) do
+			if c:IsA("Frame") then c:Destroy() end
+		end
+		for i, st in ipairs(Vip.stops) do
+			local row = create("Frame", { Size = UDim2.new(1, 0, 0, 38), BorderSizePixel = 0, LayoutOrder = i }, holder)
+			bind(row, "BackgroundColor3", "Panel")
+			corner(row)
+
+			local lbl = create("TextLabel", {
+				BackgroundTransparency = 1,
+				Position = UDim2.fromOffset(10, 0),
+				Size = UDim2.fromOffset(60, 38),
+				Text = "Цвет " .. i,
+				TextSize = 15,
+				TextXAlignment = Enum.TextXAlignment.Left,
+			}, row)
+			bind(lbl, "TextColor3", "Text")
+			bind(lbl, "Font", "Font")
+
+			local tbox = create("TextBox", {
+				Position = UDim2.fromOffset(74, 6),
+				Size = UDim2.fromOffset(60, 26),
+				Text = string.format("%.2f", st.t),
+				TextSize = 14,
+				ClearTextOnFocus = false,
+				BorderSizePixel = 0,
+			}, row)
+			bind(tbox, "BackgroundColor3", "Bg")
+			bind(tbox, "TextColor3", "Text")
+			bind(tbox, "Font", "Font")
+			corner(tbox)
+			tbox.FocusLost:Connect(function()
+				local n = tonumber(tbox.Text)
+				if n then st.t = math.floor(math.clamp(n, 0, 1) * 100 + 0.5) / 100 end
+				tbox.Text = string.format("%.2f", st.t)
+			end)
+
+			local sw = create("TextButton", {
+				Position = UDim2.fromOffset(142, 6),
+				Size = UDim2.new(1, -142 - 44, 0, 26),
+				Text = "",
+				BorderSizePixel = 0,
+				AutoButtonColor = false,
+				BackgroundColor3 = st.c,
+			}, row)
+			create("UICorner", { CornerRadius = UDim.new(0, 6) }, sw)
+			create("UIStroke", { Color = Color3.fromRGB(140, 140, 140), Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, sw)
+			sw.Activated:Connect(function()
+				pickColor("Цвет " .. i, st.c, function(c) st.c = c end, openVipCustom)
+			end)
+
+			local del = create("TextButton", {
+				AnchorPoint = Vector2.new(1, 0.5),
+				Position = UDim2.new(1, -8, 0.5, 0),
+				Size = UDim2.fromOffset(28, 26),
+				Text = "✕",
+				TextSize = 14,
+				TextColor3 = WHITE,
+				BorderSizePixel = 0,
+				BackgroundColor3 = Color3.fromRGB(200, 60, 70),
+				BackgroundTransparency = #Vip.stops <= 2 and 0.65 or 0,
+			}, row)
+			create("UICorner", { CornerRadius = UDim.new(0, 6) }, del)
+			del.Activated:Connect(function()
+				if #Vip.stops <= 2 then return end -- меньше 2 цветов нельзя
+				table.remove(Vip.stops, i)
+				rebuild()
+			end)
+		end
+	end
+	rebuild()
+
+	button(sc, "+  Добавить цвет", function()
+		if #Vip.stops >= 10 then return end
+		local pts = { 0, 1 }
+		for _, s in ipairs(Vip.stops) do table.insert(pts, s.t) end
+		table.sort(pts)
+		local bestGap, bestT = -1, 0.5
+		for i = 1, #pts - 1 do
+			local g = pts[i + 1] - pts[i]
+			if g > bestGap then bestGap = g bestT = (pts[i] + pts[i + 1]) / 2 end
+		end
+		table.insert(Vip.stops, { t = math.floor(bestT * 100 + 0.5) / 100, c = Color3.fromHSV(math.random(), 0.9, 1) })
+		rebuild()
+	end)
+end
+
+local function openVip()
+	local p = showPopup(300, 270, "VIP")
+
+	local function modeBtn(text, mode, y, onPress)
+		local b = create("TextButton", {
+			Position = UDim2.fromOffset(12, y),
+			Size = UDim2.new(1, -24, 0, 38),
+			Text = text,
+			TextSize = 19,
+			BorderSizePixel = 0,
+			AutoButtonColor = false,
+		}, p)
+		bind(b, "Font", "Font")
+		corner(b)
+		fx(b)
+		onTheme(b, function()
+			local on = Vip.mode == mode
+			b.BackgroundColor3 = on and accentBg() or Theme.Panel
+			b.TextColor3 = on and WHITE or Theme.Text
+		end)
+		table.insert(vipTargets, { inst = b, want = function() return Vip.mode == mode end })
+		b.Activated:Connect(onPress)
+	end
+
+	modeBtn("Радуга", "rainbow", 44, function()
+		vipSet(Vip.mode == "rainbow" and nil or "rainbow")
+	end)
+	modeBtn("Монохром", "mono", 90, function()
+		vipSet(Vip.mode == "mono" and nil or "mono")
+	end)
+	modeBtn("Кастом", "custom", 136, function()
+		if Vip.mode ~= "custom" then vipSet("custom") end
+		openVipCustom()
+	end)
+
+	local baseBtn = cycle(p, "Фон радуги/монохрома", { "Тёмный", "Светлый" }, Vip.base == "dark" and "Тёмный" or "Светлый", function(v)
+		Vip.base = (v == "Тёмный") and "dark" or "light"
+		if Vip.mode == "rainbow" or Vip.mode == "mono" then
+			local b = BasePalettes[Vip.base]
+			tweenTheme({ Accent = Theme.Accent, Bg = b.Bg, Panel = b.Panel, Text = b.Text })
+		end
+	end)
+	baseBtn.Position = UDim2.fromOffset(12, 182)
+	baseBtn.Size = UDim2.new(1, -24, 0, 34)
+
+	local off = button(p, "Выключить VIP", function() vipSet(nil) end, true)
+	off.Position = UDim2.fromOffset(12, 224)
+	off.Size = UDim2.new(1, -24, 0, 34)
+end
+
+---------------------------------------------------------------------
+-- ПОПАП: КОНСТРУКТОР ТЕМ
+---------------------------------------------------------------------
+local function openConstructor()
+	local p = showPopup(430, 284, "Конструктор тем")
+	local active = "Accent"
+	local hexBox
+
+	local picker = colorPicker(p, 12, 42, 164, function(c)
+		themeTween += 1
+		Theme[active] = c
+		currentThemeName = "Своя"
+		applyTheme()
+		hexBox.Text = c:ToHex()
+	end)
+
+	hexBox = create("TextBox", {
+		Position = UDim2.fromOffset(12, 214),
+		Size = UDim2.fromOffset(194, 30),
+		Text = Theme[active]:ToHex(),
+		PlaceholderText = "HEX",
+		TextSize = 16,
+		ClearTextOnFocus = false,
+		BorderSizePixel = 0,
+	}, p)
+	bind(hexBox, "BackgroundColor3", "Panel")
+	bind(hexBox, "TextColor3", "Text")
+	bind(hexBox, "Font", "Font")
+	corner(hexBox)
+	hexBox.FocusLost:Connect(function()
+		local c = parseHex(hexBox.Text)
+		if c then
+			themeTween += 1
+			Theme[active] = c
+			currentThemeName = "Своя"
+			picker.set(c)
+			applyTheme()
+		else
+			hexBox.Text = Theme[active]:ToHex()
+		end
+	end)
+	picker.set(Theme[active])
+
+	local targets = { { "Акцент", "Accent" }, { "Фон", "Bg" }, { "Блоки", "Panel" }, { "Текст", "Text" } }
+	for i, t in ipairs(targets) do
+		local chip = create("TextButton", {
+			Position = UDim2.fromOffset(224 + ((i - 1) % 2) * 98, 42 + math.floor((i - 1) / 2) * 34),
+			Size = UDim2.fromOffset(94, 30),
+			Text = t[1],
+			TextSize = 16,
+			BorderSizePixel = 0,
+			AutoButtonColor = false,
+		}, p)
+		create("UIPadding", { PaddingLeft = UDim.new(0, 22) }, chip)
+		bind(chip, "BackgroundColor3", "Panel")
+		bind(chip, "TextColor3", "Text")
+		bind(chip, "Font", "Font")
+		corner(chip)
+		fx(chip)
+		local sq = create("Frame", {
+			Position = UDim2.fromOffset(-16, 8),
+			Size = UDim2.fromOffset(14, 14),
+			BorderSizePixel = 0,
+		}, chip)
+		create("UICorner", { CornerRadius = UDim.new(0, 4) }, sq)
+		local st = create("UIStroke", { Thickness = 2, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, chip)
+		onTheme(chip, function()
+			sq.BackgroundColor3 = Theme[t[2]]
+			st.Color = Theme.Accent
+			st.Enabled = (active == t[2])
+		end)
+		chip.Activated:Connect(function()
+			active = t[2]
+			picker.set(Theme[active])
+			hexBox.Text = Theme[active]:ToHex()
+			applyTheme()
+		end)
+	end
+
+	local nameBox = create("TextBox", {
+		Position = UDim2.fromOffset(224, 116),
+		Size = UDim2.fromOffset(194, 30),
+		Text = "",
+		PlaceholderText = "Название темы",
+		TextSize = 16,
+		ClearTextOnFocus = false,
+		BorderSizePixel = 0,
+	}, p)
+	bind(nameBox, "BackgroundColor3", "Panel")
+	bind(nameBox, "TextColor3", "Text")
+	bind(nameBox, "Font", "Font")
+	corner(nameBox)
+
+	local saveBtn
+	saveBtn = button(p, "Сохранить тему", function()
+		local n = nameBox.Text ~= "" and nameBox.Text or ("Моя тема " .. (#CustomThemes + 1))
+		table.insert(CustomThemes, { text = n, theme = snapshot() })
+		currentThemeName = n
+		saveBtn.Text = "Сохранено ✓"
+		task.delay(1.2, function()
+			if saveBtn.Parent then saveBtn.Text = "Сохранить тему" end
+		end)
+	end)
+	saveBtn.Position = UDim2.fromOffset(224, 154)
+	saveBtn.Size = UDim2.fromOffset(194, 34)
+
+	local resetBtn = button(p, "Сбросить цвета", function()
+		currentThemeName = BuiltIn[1].text
+		Vip.saved = nil
+		tweenTheme(BuiltIn[1].theme)
+		task.delay(0.4, function()
+			if p.Parent then
+				picker.set(Theme[active])
+				hexBox.Text = Theme[active]:ToHex()
+			end
+		end)
+	end, true)
+	resetBtn.Position = UDim2.fromOffset(224, 196)
+	resetBtn.Size = UDim2.fromOffset(194, 34)
+
+	local vipBtn = button(p, "Vip", openVip)
+	vipBtn.Position = UDim2.fromOffset(224, 238)
+	vipBtn.Size = UDim2.fromOffset(194, 34)
+end
+
+---------------------------------------------------------------------
+-- ПОПАП: РЕДАКТОР АНИМАЦИЙ
+---------------------------------------------------------------------
+local openAnimEditor
+openAnimEditor = function(id)
+	id = id or AnimOrder[1]
+	local a = Anim[id]
+	local p = showPopup(340, 288, "Редактор анимаций")
+	local sc = popupList(p)
+
+	-- сцена превью
+	local stage = create("Frame", { Size = UDim2.new(1, 0, 0, 80), BorderSizePixel = 0, ClipsDescendants = true }, sc)
+	bind(stage, "BackgroundColor3", "Panel")
+	corner(stage)
+	local demo = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(44, 44),
+		BorderSizePixel = 0,
+	}, stage)
+	bind(demo, "BackgroundColor3", "Accent")
+	create("UICorner", { CornerRadius = UDim.new(0, 10) }, demo)
+	local ds = create("UIScale", { Scale = 1 }, demo)
+
+	local function play()
+		if not demo.Parent then return end
+		local center = UDim2.fromScale(0.5, 0.5)
+		ds.Scale = 1
+		demo.Position = center
+		demo.BackgroundColor3 = accentBg()
+		local k = a.kind
+		if k == "scaleIn" then
+			ds.Scale = 0.01
+			tw(ds, a.time, { Scale = 1 }, a.style, a.dir)
+		elseif k == "scaleOut" then
+			tw(ds, a.time, { Scale = 0.01 }, a.style, a.dir)
+		elseif k == "slide" then
+			demo.Position = UDim2.fromScale(0.12, 0.5)
+			tw(demo, a.time, { Position = UDim2.fromScale(0.88, 0.5) }, a.style, a.dir)
+		elseif k == "knob" then
+			demo.Position = UDim2.fromScale(0.3, 0.5)
+			tw(demo, a.time, { Position = UDim2.fromScale(0.7, 0.5) }, a.style, a.dir)
+		elseif k == "color" then
+			demo.BackgroundColor3 = Theme.Panel
+			tw(demo, a.time, { BackgroundColor3 = Theme.Accent }, a.style, a.dir)
+		end
+	end
+
+	local items = {}
+	for _, k in ipairs(AnimOrder) do
+		table.insert(items, { text = Anim[k].name, id = k, selected = (k == id) })
+	end
+	button(sc, "Анимация: " .. a.name, function()
+		openList("Анимации", items, function(it) openAnimEditor(it.id) end)
+	end)
+
+	button(sc, "Твин: " .. a.style.Name, function()
+		local styles = {}
+		for _, s in ipairs(Enum.EasingStyle:GetEnumItems()) do
+			table.insert(styles, { text = s.Name, style = s, selected = (a.style == s) })
+		end
+		openList("Твин (стиль)", styles, function(it)
+			a.style = it.style
+			openAnimEditor(id)
+		end)
+	end)
+
+	cycle(sc, "Направление", { "In", "Out", "InOut" }, a.dir.Name, function(v)
+		a.dir = Enum.EasingDirection[v]
+		play()
+	end)
+
+	slider(sc, "Длительность (сек)", 0.05, 2, a.time, 0.05, 5, function(v) a.time = v end)
+
+	button(sc, "Превью  ▶", play)
+	button(sc, "Сбросить эту анимацию", function()
+		local d = AnimDefaults[id]
+		a.style, a.dir, a.time = d.style, d.dir, d.time
+		openAnimEditor(id)
+	end, true)
+
+	task.delay(0.35, play)
+end
+
+---------------------------------------------------------------------
+-- SKILLS (смешные кнопки с кастомизацией)
+---------------------------------------------------------------------
+local function C(r, g, b) return Color3.fromRGB(r, g, b) end
+local function col(key, label, default) return { key = key, label = label, type = "color", default = default } end
+local function num(key, label, min, max, default, step, hardMax)
+	return { key = key, label = label, type = "number", min = min, max = max, default = default, step = step, hardMax = hardMax }
+end
+local function bool(key, label, default) return { key = key, label = label, type = "bool", default = default } end
+
+local SkillDefs = {
+	-- ДИСКОТЕКА
+	{
+		name = "Дискотека", kind = "toggle",
+		params = {
+			col("c1", "Цвет дискотеки 1", C(255, 0, 120)),
+			col("c2", "Цвет дискотеки 2", C(0, 200, 255)),
+			col("c3", "Цвет дискотеки 3", C(255, 230, 0)),
+			num("cspeed", "Скорость смены цвета", 0, 5, 0.8, 0.1, 30),
+			num("spin", "Скорость вращения", 0, 1500, 300, 10, 10000),
+			num("bright", "Яркость света", 0, 10, 3, 0.5, 50),
+			num("range", "Радиус света", 5, 60, 25, 1, 200),
+			bool("ball", "Дискошар над головой", true),
+			bool("sparks", "Искры", true),
+			bool("screen", "Цветной экран", true),
+			num("tint", "Сила цвета экрана", 0, 1, 0.35, 0.05, 1),
+		},
+		start = function(cfg)
+			local char, root, hum = player.Character, getRoot(), getHum()
+			if not (char and root and hum) then return nil end
+
+			local folder = create("Folder", { Name = "LizaDisco" }, workspace)
+			local ball = create("Part", {
+				Name = "Ball", Shape = Enum.PartType.Ball, Size = Vector3.new(2.2, 2.2, 2.2),
+				Material = Enum.Material.Neon, Anchored = true, CanCollide = false,
+				CanQuery = false, CanTouch = false, CastShadow = false,
+			}, folder)
+			local light = create("PointLight", { Shadows = false }, ball)
+			local sparks = create("ParticleEmitter", {
+				Rate = 0,
+				Lifetime = NumberRange.new(0.6, 1.1),
+				Speed = NumberRange.new(8, 16),
+				SpreadAngle = Vector2.new(180, 180),
+				LightEmission = 1,
+				Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.5), NumberSequenceKeypoint.new(1, 0) }),
+				Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 1) }),
+			}, ball)
+			local cc = create("ColorCorrectionEffect", { Name = "LizaDiscoCC", TintColor = WHITE }, Lighting)
+
+			local oldAuto = hum.AutoRotate
+			local conn = RS.RenderStepped:Connect(function(dt)
+				if not root.Parent then return end
+				local t = os.clock()
+				local k = (t * cfg.cspeed) % 3
+				local i = math.floor(k)
+				local cols = { cfg.c1, cfg.c2, cfg.c3 }
+				local col1 = cols[i + 1]
+				local col2 = cols[(i + 1) % 3 + 1]
+				local c = col1:Lerp(col2, k - i)
+
+				light.Color = c
+				light.Brightness = cfg.bright
+				light.Range = cfg.range
+				ball.Color = c
+				ball.Transparency = cfg.ball and 0 or 1
+				ball.CFrame = root.CFrame * CFrame.new(0, 4.6, 0) * CFrame.Angles(0, t * 2, 0)
+				sparks.Rate = cfg.sparks and 40 or 0
+				sparks.Color = ColorSequence.new(c)
+				cc.Enabled = cfg.screen
+				cc.TintColor = WHITE:Lerp(c, cfg.tint)
+
+				if cfg.spin ~= 0 then
+					hum.AutoRotate = false
+					root.CFrame = root.CFrame * CFrame.Angles(0, math.rad(cfg.spin) * dt, 0)
+				else
+					hum.AutoRotate = oldAuto
+				end
+			end)
+			return function()
+				conn:Disconnect()
+				folder:Destroy()
+				cc:Destroy()
+				if hum.Parent then hum.AutoRotate = oldAuto end
+			end
+		end,
+	},
+
+	-- РАДУЖНЫЙ СЛЕД
+	{
+		name = "Радужный след", kind = "toggle",
+		params = {
+			bool("rainbow", "Радуга", true),
+			col("c1", "Цвет следа 1", C(255, 0, 120)),
+			col("c2", "Цвет следа 2", C(0, 200, 255)),
+			num("width", "Ширина", 0.2, 6, 1.5, 0.1, 20),
+			num("life", "Длина следа (сек)", 0.2, 5, 1.2, 0.1, 20),
+			num("glow", "Свечение", 0, 1, 1, 0.05, 1),
+		},
+		start = function(cfg)
+			local root = getRoot()
+			if not root then return nil end
+			local a0 = create("Attachment", { Name = "LizaTrail0", Position = Vector3.new(0, 1.2, 0) }, root)
+			local a1 = create("Attachment", { Name = "LizaTrail1", Position = Vector3.new(0, -1.2, 0) }, root)
+			local tr = create("Trail", {
+				Attachment0 = a0, Attachment1 = a1, FaceCamera = true,
+				Transparency = NumberSequence.new(0, 1),
+			}, root)
+			local conn = RS.Heartbeat:Connect(function()
+				tr.Lifetime = cfg.life
+				tr.LightEmission = cfg.glow
+				tr.WidthScale = NumberSequence.new(cfg.width)
+				if cfg.rainbow then
+					local t = os.clock() * 0.5
+					local kps = {}
+					for k = 0, 6 do
+						table.insert(kps, ColorSequenceKeypoint.new(k / 6, Color3.fromHSV((k / 6 + t) % 1, 0.9, 1)))
+					end
+					tr.Color = ColorSequence.new(kps)
+				else
+					tr.Color = ColorSequence.new(cfg.c1, cfg.c2)
+				end
+			end)
+			return function()
+				conn:Disconnect()
+				tr:Destroy() a0:Destroy() a1:Destroy()
+			end
+		end,
+	},
+
+	-- НЕОНОВАЯ АУРА
+	{
+		name = "Неоновая аура", kind = "toggle",
+		params = {
+			bool("rainbow", "Радуга", false),
+			col("c1", "Цвет заливки", C(255, 140, 26)),
+			col("c2", "Цвет контура", C(255, 255, 255)),
+			num("fill", "Прозрачность заливки", 0, 1, 0.5, 0.05, 1),
+			num("pulse", "Скорость пульсации", 0, 5, 1.5, 0.1, 30),
+		},
+		start = function(cfg)
+			local char = player.Character
+			if not char then return nil end
+			local hl = create("Highlight", {
+				Name = "LizaAura", Adornee = char, DepthMode = Enum.HighlightDepthMode.AlwaysOnTop,
+			}, char)
+			local conn = RS.Heartbeat:Connect(function()
+				local t = os.clock()
+				local pulse = 0.5 + 0.5 * math.sin(t * cfg.pulse * math.pi * 2)
+				if cfg.rainbow then
+					hl.FillColor = Color3.fromHSV((t * 0.3) % 1, 0.9, 1)
+					hl.OutlineColor = Color3.fromHSV((t * 0.3 + 0.5) % 1, 0.9, 1)
+				else
+					hl.FillColor = cfg.c1
+					hl.OutlineColor = cfg.c2
+				end
+				hl.FillTransparency = math.clamp(cfg.fill + (1 - cfg.fill) * 0.5 * (1 - pulse), 0, 1)
+			end)
+			return function()
+				conn:Disconnect()
+				hl:Destroy()
+			end
+		end,
+	},
+
+	-- КУЗНЕЧИК
+	{
+		name = "Кузнечик", kind = "toggle",
+		params = {
+			num("power", "Сила прыжка", 20, 200, 80, 5, 500),
+			num("interval", "Пауза между прыжками", 0.1, 3, 0.6, 0.05, 10),
+		},
+		start = function(cfg)
+			local root, hum = getRoot(), getHum()
+			if not (root and hum) then return nil end
+			local timer = 0
+			local conn = RS.Heartbeat:Connect(function(dt)
+				timer += dt
+				if timer >= cfg.interval and hum.FloorMaterial ~= Enum.Material.Air and not State.Flying then
+					timer = 0
+					local v = root.AssemblyLinearVelocity
+					root.AssemblyLinearVelocity = Vector3.new(v.X, cfg.power, v.Z)
+				end
+			end)
+			return function() conn:Disconnect() end
+		end,
+	},
+
+	-- РАКЕТА (одноразовый запуск)
+	{
+		name = "Ракета", kind = "action",
+		params = {
+			num("power", "Скорость подъёма", 50, 400, 150, 10, 1000),
+			num("time", "Время полёта (сек)", 0.5, 6, 2, 0.1, 20),
+			col("c1", "Цвет огня 1", C(255, 120, 0)),
+			col("c2", "Цвет огня 2", C(255, 230, 150)),
+		},
+		start = function(cfg)
+			local root = getRoot()
+			if not root then return nil end
+			local att = create("Attachment", { Position = Vector3.new(0, -2.5, 0) }, root)
+			local fire = create("ParticleEmitter", {
+				EmissionDirection = Enum.NormalId.Bottom,
+				Rate = 250,
+				Lifetime = NumberRange.new(0.4, 0.8),
+				Speed = NumberRange.new(12, 22),
+				SpreadAngle = Vector2.new(12, 12),
+				LightEmission = 1,
+				Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 2.2), NumberSequenceKeypoint.new(1, 0) }),
+				Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 1) }),
+				Color = ColorSequence.new(cfg.c1, cfg.c2),
+			}, att)
+			local t0 = os.clock()
+			local conn
+			conn = RS.Heartbeat:Connect(function()
+				if not root.Parent then conn:Disconnect() return end
+				if os.clock() - t0 >= cfg.time then
+					conn:Disconnect()
+					fire.Enabled = false
+					Debris:AddItem(att, 1.2)
+					return
+				end
+				local v = root.AssemblyLinearVelocity
+				root.AssemblyLinearVelocity = Vector3.new(v.X, math.max(v.Y, cfg.power), v.Z)
+			end)
+			return nil
+		end,
+	},
+}
+
+-- конфиги и состояния скиллов
+local Skills = {}
+for _, def in ipairs(SkillDefs) do
+	def.cfg, def.defaults = {}, {}
+	for _, pr in ipairs(def.params) do
+		def.cfg[pr.key] = pr.default
+		def.defaults[pr.key] = pr.default
+	end
+	table.insert(Skills, def)
+end
+
+local function setSkill(skill, on)
+	if on == (skill.stop ~= nil) then return end
+	if on then
+		local stop = skill.start(skill.cfg)
+		if stop then
+			skill.stop = stop
+		elseif skill.setUI then
+			skill.setUI(false)
+		end
+	else
+		local s = skill.stop
+		skill.stop = nil
+		if s then s() end
+	end
+end
+
+local function stopAllSkills()
+	for _, s in ipairs(Skills) do
+		if s.stop then
+			local st = s.stop
+			s.stop = nil
+			st()
+			if s.setUI then s.setUI(false) end
+		end
+	end
+end
+
+track(player.CharacterAdded:Connect(stopAllSkills))
+
+-- редактор скилла
+local openSkillEditor
+openSkillEditor = function(skill)
+	local p = showPopup(330, 288, skill.name)
+	local sc = popupList(p)
+
+	input(sc, "Название кнопки", skill.name, function(t)
+		if t ~= "" then
+			skill.name = t
+			if skill.nameLabel then skill.nameLabel.Text = t end
+		end
+	end)
+
+	for _, pr in ipairs(skill.params) do
+		if pr.type == "color" then
+			colorRow(sc, pr.label, skill.cfg[pr.key], function()
+				pickColor(pr.label, skill.cfg[pr.key], function(c) skill.cfg[pr.key] = c end, function()
+					openSkillEditor(skill)
+				end)
+			end)
+		elseif pr.type == "number" then
+			slider(sc, pr.label, pr.min, pr.max, skill.cfg[pr.key], pr.step, pr.hardMax, function(v)
+				skill.cfg[pr.key] = v
+			end)
+		else
+			toggle(sc, pr.label, skill.cfg[pr.key], function(v) skill.cfg[pr.key] = v end)
+		end
+	end
+
+	button(sc, "Сбросить настройки", function()
+		for k, v in pairs(skill.defaults) do skill.cfg[k] = v end
+		openSkillEditor(skill)
+	end, true)
+end
+
+---------------------------------------------------------------------
+-- СТРАНИЦЫ
+---------------------------------------------------------------------
+-- ДВИЖЕНИЕ
+local pMove = addTab("Движение")
+slider(pMove, "Скорость ходьбы", 0, 200, 16, 1, 1000, function(v) State.Walk = v State.WalkOn = true end)
+slider(pMove, "Высота прыжка", 0, 300, 50, 1, 1000, function(v) State.Jump = v State.JumpOn = true end)
+button(pMove, "Сбросить по умолчанию", function()
+	State.WalkOn, State.JumpOn = false, false
+	local hum = getHum()
+	if hum then hum.WalkSpeed = 16 hum.UseJumpPower = true hum.JumpPower = 50 end
+end, true)
+note(pMove, "Можно ввести своё число в окошко справа от ползунка (до 1000).")
+
+-- ПОЛЁТ
+local pFly = addTab("Полёт")
+flyTgl = toggle(pFly, "Полёт", false, function(on)
+	if on then
+		if not startFly() then flyTgl(false) end
+	else
+		stopFly()
+	end
+end)
+slider(pFly, "Скорость полёта", 5, 300, 60, 1, 1000, function(v) State.FlySpeed = v end)
+note(pFly, "Летишь туда, куда смотрит камера: смотришь вверх — летишь вверх.\nПК: WASD, Space/E — вверх, Ctrl/Q — вниз, F — вкл/выкл.\nТелефон: просто джойстик.")
+
+-- ТУЛЫ
+local pTool = addTab("Тулы")
+local Draft = { Name = "МойТул", Shape = "Блок", Color = Color3.fromRGB(255, 140, 26), X = 1, Y = 1, Z = 3, Action = "Нет" }
+
+input(pTool, "Название", Draft.Name, function(t) if t ~= "" then Draft.Name = t end end)
+cycle(pTool, "Форма", ShapeNames, Draft.Shape, function(v) Draft.Shape = v end)
+colorRow(pTool, "Цвет", Draft.Color, function(sw)
+	pickColor("Цвет тула", Draft.Color, function(c)
+		Draft.Color = c
+		sw.BackgroundColor3 = c
+	end, function() closePopup() end)
+end)
+slider(pTool, "Размер X", 0.2, 10, 1, 0.1, 50, function(v) Draft.X = v end)
+slider(pTool, "Размер Y", 0.2, 10, 1, 0.1, 50, function(v) Draft.Y = v end)
+slider(pTool, "Размер Z", 0.2, 10, 3, 0.1, 50, function(v) Draft.Z = v end)
+cycle(pTool, "Действие (клик)", ActionNames, Draft.Action, function(v) Draft.Action = v end)
+toggle(pTool, "Выдавать после респавна", true, function(v) AutoGive = v end)
+
+local listFrame
+local function rebuildList()
+	for _, c in ipairs(listFrame:GetChildren()) do
+		if c:IsA("Frame") then c:Destroy() end
+	end
+	for i, spec in ipairs(Created) do
+		local row = create("Frame", { Size = UDim2.new(1, 0, 0, 34), BorderSizePixel = 0, LayoutOrder = i }, listFrame)
+		bind(row, "BackgroundColor3", "Panel")
+		corner(row)
+		local l = create("TextLabel", {
+			BackgroundTransparency = 1,
+			Position = UDim2.fromOffset(8, 0),
+			Size = UDim2.new(1, -110, 1, 0),
+			Text = spec.Name .. "  (" .. spec.Action .. ")",
+			TextSize = 15,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		}, row)
+		bind(l, "TextColor3", "Text")
+		bind(l, "Font", "Font")
+		local give = create("TextButton", {
+			Position = UDim2.new(1, -100, 0, 4),
+			Size = UDim2.fromOffset(62, 26),
+			Text = "Дать",
+			TextSize = 14,
+			TextColor3 = WHITE,
+			BorderSizePixel = 0,
+			AutoButtonColor = false,
+		}, row)
+		bind(give, "BackgroundColor3", "Accent")
+		bind(give, "Font", "Font")
+		corner(give)
+		fx(give)
+		give.Activated:Connect(function() giveTool(spec) end)
+		local del = create("TextButton", {
+			Position = UDim2.new(1, -34, 0, 4),
+			Size = UDim2.fromOffset(28, 26),
+			Text = "✕",
+			TextSize = 14,
+			TextColor3 = WHITE,
+			BorderSizePixel = 0,
+			BackgroundColor3 = Color3.fromRGB(200, 60, 70),
+		}, row)
+		corner(del)
+		del.Activated:Connect(function()
+			removeToolById(spec.Id)
+			table.remove(Created, table.find(Created, spec))
+			rebuildList()
+		end)
+	end
+end
+
+button(pTool, "Создать тул", function()
+	nextId += 1
+	local spec = {
+		Id = nextId,
+		Name = Draft.Name,
+		Shape = Draft.Shape,
+		Color = Draft.Color,
+		X = Draft.X, Y = Draft.Y, Z = Draft.Z,
+		Action = Draft.Action,
+	}
+	table.insert(Created, spec)
+	giveTool(spec)
+	rebuildList()
+end)
+note(pTool, "Твои тулы:")
+listFrame = create("Frame", {
+	BackgroundTransparency = 1,
+	Size = UDim2.new(1, 0, 0, 0),
+	AutomaticSize = Enum.AutomaticSize.Y,
+}, pTool)
+create("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, listFrame)
+note(pTool, "Тулы локальные: видишь и пользуешься ими только ты.")
+
+-- SKILLS
+local pSkills = addTab("Skills")
+for _, skill in ipairs(Skills) do
+	local row = create("Frame", { Size = UDim2.new(1, 0, 0, 42), BorderSizePixel = 0 }, pSkills)
+	bind(row, "BackgroundColor3", "Panel")
+	corner(row)
+
+	local edge = skill.kind == "toggle" and 58 or 78
+	local nameL = create("TextLabel", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(10, 0),
+		Size = UDim2.new(1, -(edge + 116), 1, 0),
+		Text = skill.name,
+		TextSize = 16,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, row)
+	bind(nameL, "TextColor3", "Text")
+	bind(nameL, "Font", "Font")
+	skill.nameLabel = nameL
+
+	local edit = create("TextButton", {
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -edge, 0.5, 0),
+		Size = UDim2.fromOffset(106, 26),
+		Text = "Редактировать",
+		TextSize = 13,
+		BorderSizePixel = 0,
+		AutoButtonColor = false,
+	}, row)
+	bind(edit, "BackgroundColor3", "Bg")
+	bind(edit, "TextColor3", "Text")
+	bind(edit, "Font", "Font")
+	corner(edit)
+	fx(edit)
+	edit.Activated:Connect(function() openSkillEditor(skill) end)
+
+	if skill.kind == "toggle" then
+		local pl = makePill(row, false, function(on) setSkill(skill, on) end)
+		skill.setUI = pl.set
+		local hit = create("TextButton", {
+			AnchorPoint = Vector2.new(1, 0.5),
+			Position = UDim2.new(1, -4, 0.5, 0),
+			Size = UDim2.fromOffset(52, 36),
+			BackgroundTransparency = 1,
+			Text = "",
+		}, row)
+		hit.Activated:Connect(pl.flip)
+	else
+		local go = button(row, "Старт", function() skill.start(skill.cfg) end)
+		go.AnchorPoint = Vector2.new(1, 0.5)
+		go.Position = UDim2.new(1, -8, 0.5, 0)
+		go.Size = UDim2.fromOffset(62, 26)
+		go.TextSize = 14
+	end
+end
+note(pSkills, "У каждого скилла есть «Редактировать»: цвета, скорости, эффекты — меняются вживую.")
+
+-- ДИЗАЙН
+local pDesign = addTab("Дизайн")
+local setTitle = input(pDesign, "Название панели", Theme.Title, function(t)
+	if t ~= "" then Theme.Title = t applyTheme() end
+end)
+button(pDesign, "Выбрать тему", openThemeList)
+button(pDesign, "Конструктор тем", openConstructor)
+button(pDesign, "Редактор анимаций", function() openAnimEditor(AnimOrder[1]) end)
+
+local fontBtn = button(pDesign, "", openFontList)
+onTheme(fontBtn, function() fontBtn.Text = "Шрифт: " .. Theme.Font.Name end)
+
+local setTrans = slider(pDesign, "Прозрачность окна", 0, 0.8, Theme.Transparency, 0.01, 0.9, function(v) Theme.Transparency = v applyTheme() end)
+local setCorner = slider(pDesign, "Скругление", 0, 24, Theme.Corner, 1, 30, function(v) Theme.Corner = v applyTheme() end)
+local setScale = slider(pDesign, "Размер панели", 0.6, 1.5, Theme.Scale, 0.05, 2, function(v) Theme.Scale = v applyTheme() end)
+
+local rebinding = false
+local keyBtn
+keyBtn = button(pDesign, "", function()
+	rebinding = true
+	keyBtn.Text = "Нажми любую клавишу..."
+end)
+onTheme(keyBtn, function()
+	if not rebinding then keyBtn.Text = "Клавиша меню: " .. Theme.ToggleKey.Name end
 end)
 
-reopenButton.Activated:Connect(function()
-    playUISound(CLICK_SOUND_ID)
-    showMenu()
-end)
+button(pDesign, "Сбросить дизайн", function()
+	vipSet(nil)
+	Vip.saved = nil
+	currentThemeName = BuiltIn[1].text
+	for k, v in pairs(Defaults) do Theme[k] = v end
+	setTitle(Theme.Title)
+	setTrans(Theme.Transparency)
+	setCorner(Theme.Corner)
+	setScale(Theme.Scale)
+	tweenTheme(BuiltIn[1].theme)
+	applyTheme()
+end, true)
 
-local dragging = false
-local dragStart
-local startPosition
+button(pDesign, "Выгрузить панель", function()
+	stopFly()
+	stopAllSkills()
+	State.WalkOn, State.JumpOn = false, false
+	for _, c in ipairs(conns) do c:Disconnect() end
+	gui:Destroy()
+end, true)
 
-header.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = true
-        dragStart = input.Position
-        startPosition = main.Position
-    end
-end)
+---------------------------------------------------------------------
+-- ГОРЯЧИЕ КЛАВИШИ
+---------------------------------------------------------------------
+track(UIS.InputBegan:Connect(function(i, gp)
+	if i.UserInputType ~= Enum.UserInputType.Keyboard then return end
+	if rebinding then
+		rebinding = false
+		if i.KeyCode ~= Enum.KeyCode.Unknown then Theme.ToggleKey = i.KeyCode end
+		applyTheme()
+		return
+	end
+	if gp then return end
+	if i.KeyCode == Theme.ToggleKey then
+		setOpen(not isOpen)
+	elseif i.KeyCode == Enum.KeyCode.F then
+		toggleFly()
+	end
+end))
 
-UIS.InputChanged:Connect(function(input)
-    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
-        or input.UserInputType == Enum.UserInputType.Touch) then
-        local delta = input.Position - dragStart
-        main.Position = UDim2.new(
-            startPosition.X.Scale,
-            startPosition.X.Offset + delta.X,
-            startPosition.Y.Scale,
-            startPosition.Y.Offset + delta.Y
-        )
-    end
-end)
+applyTheme()
 
-UIS.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = false
-    end
-end)
+---------------------------------------------------------------------
+-- СТАРТ: ОТКАЗ ОТ ОТВЕТСТВЕННОСТИ (на весь экран) -> панель
+---------------------------------------------------------------------
+local function showMain()
+	openBtn.Visible = true
+	tw(openBtn, 0.4, { Size = UDim2.fromOffset(46, 46) }, Enum.EasingStyle.Back)
+	setOpen(true)
+end
 
-UIS.InputBegan:Connect(function(input, processed)
-    if not processed and input.KeyCode == Enum.KeyCode.RightShift then
-        playUISound(CLICK_SOUND_ID)
-        if menuOpen then hideMenu() else showMenu() end
-    end
-end)
+local function runDisclaimer(onDone)
+	local splash = create("ScreenGui", {
+		Name = "LizaHubC_Disclaimer",
+		ResetOnSpawn = false,
+		IgnoreGuiInset = true,
+		DisplayOrder = 1000,
+		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+	}, playerGui)
 
-continueButton.Activated:Connect(function()
-    playUISound(CLICK_SOUND_ID)
-    tween(splash, 0.2, {BackgroundTransparency = 1})
-    tween(splashTitle, 0.2, {TextTransparency = 1})
-    tween(disclaimerText, 0.2, {TextTransparency = 1})
-    tween(continueButton, 0.2, {BackgroundTransparency = 1, TextTransparency = 1})
+	local bgF = create("Frame", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = Color3.fromRGB(12, 12, 14),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Active = true,
+	}, splash)
 
-    task.delay(0.22, function()
-        splash:Destroy()
-        main.Visible = true
-        fitScreen()
-        if autoLoadConfig and configs[selectedConfig] then
-            applyConfig(configs[selectedConfig])
-        end
-    end)
-end)
+	local brand = create("TextLabel", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.30),
+		Size = UDim2.fromOffset(300, 28),
+		BackgroundTransparency = 1,
+		Text = Theme.Title,
+		TextSize = 22,
+		TextColor3 = Color3.fromRGB(190, 190, 195),
+		Font = Theme.Font,
+		TextTransparency = 1,
+	}, bgF)
 
-player.CharacterAdded:Connect(function()
-    stopFly()
-end)
+	local title = create("TextLabel", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.44),
+		Size = UDim2.fromScale(0.9, 0.12),
+		BackgroundTransparency = 1,
+		Text = "ОТКАЗ ОТ ОТВЕТСТВЕННОСТИ",
+		TextScaled = true,
+		TextColor3 = Theme.Accent,
+		Font = Theme.Font,
+		TextTransparency = 1,
+	}, bgF)
+	create("UITextSizeConstraint", { MaxTextSize = 56, MinTextSize = 14 }, title)
 
-selectTab("Player")
-print("LizaHub v6.0 loaded")
+	local line = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.52),
+		Size = UDim2.fromOffset(0, 3),
+		BackgroundColor3 = Theme.Accent,
+		BorderSizePixel = 0,
+	}, bgF)
+
+	local btn = create("TextButton", {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.62),
+		Size = UDim2.fromOffset(260, 46),
+		BackgroundColor3 = Theme.Accent,
+		BackgroundTransparency = 1,
+		Text = "ПРИНЯТЬ И ПРОДОЛЖИТЬ",
+		TextSize = 20,
+		TextColor3 = WHITE,
+		TextTransparency = 1,
+		Font = Theme.Font,
+		BorderSizePixel = 0,
+		AutoButtonColor = false,
+		Visible = false,
+	}, bgF)
+	create("UICorner", { CornerRadius = UDim.new(0, 10) }, btn)
+
+	local bottom = create("TextLabel", {
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, -16),
+		Size = UDim2.new(0.92, 0, 0, 44),
+		BackgroundTransparency = 1,
+		Text = "Если вы используете этот скрипт для хакерства, взломов и т.д., то мы не гарантируем безопасность, и этот скрипт не предназначен для этого.",
+		TextSize = 13,
+		TextWrapped = true,
+		TextColor3 = Color3.fromRGB(170, 170, 175),
+		Font = Theme.Font,
+		TextTransparency = 1,
+	}, bgF)
+
+	local done = false
+	btn.Activated:Connect(function()
+		if done then return end
+		done = true
+		tw(bgF, 0.5, { BackgroundTransparency = 1 })
+		tw(brand, 0.35, { TextTransparency = 1 })
+		tw(title, 0.35, { TextTransparency = 1, Position = UDim2.fromScale(0.5, 0.40) })
+		tw(line, 0.35, { BackgroundTransparency = 1 })
+		tw(bottom, 0.35, { TextTransparency = 1 })
+		tw(btn, 0.35, { BackgroundTransparency = 1, TextTransparency = 1 })
+		task.delay(0.55, function()
+			splash:Destroy()
+			onDone()
+		end)
+	end)
+
+	task.spawn(function()
+		tw(bgF, 0.5, { BackgroundTransparency = 0.02 })
+		task.wait(0.25)
+		tw(brand, 0.5, { TextTransparency = 0.1 })
+		tw(title, 0.8, { TextTransparency = 0, Position = UDim2.fromScale(0.5, 0.40) }, Enum.EasingStyle.Quint)
+		task.wait(0.5)
+		tw(line, 0.7, { Size = UDim2.fromOffset(240, 3) }, Enum.EasingStyle.Quint)
+		tw(bottom, 0.9, { TextTransparency = 0.25 })
+		task.wait(1.6)
+		if done then return end
+		btn.Visible = true
+		tw(btn, 0.5, { BackgroundTransparency = 0, TextTransparency = 0 })
+	end)
+end
+
+runDisclaimer(showMain)
