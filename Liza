@@ -1,8 +1,9 @@
 --[[
-    LizaHubC v3 — один LocalScript, без серверных скриптов
+    LizaHubC v4 — один LocalScript, без серверных скриптов
     Положи в StarterPlayer > StarterPlayerScripts
 
     Вкладки: Движение | Полёт | Тулы | Skills | Дизайн
+    Тулы: 3D-превью, редактор партов, пресеты, скрипты (ЭКСПЕРИМЕНТАЛЬНО), реальные выстрелы
     Дизайн: Выбрать тему / Конструктор тем (+ Vip) / Редактор анимаций
 ]]
 
@@ -1072,39 +1073,1218 @@ track(player.CharacterAdded:Connect(function()
 end))
 
 ---------------------------------------------------------------------
--- ЛОГИКА: СВОИ ТУЛЫ
+-- ИГРОК: НОУКЛИП и БЕСКОНЕЧНЫЙ ПРЫЖОК
 ---------------------------------------------------------------------
+local noclipConn, infJumpConn
+local noclipSaved = {}
+
+local function setNoclip(on)
+	if noclipConn then noclipConn:Disconnect() noclipConn = nil end
+	if on then
+		noclipConn = RS.Stepped:Connect(function()
+			local c = player.Character
+			if not c then return end
+			for _, d in ipairs(c:GetDescendants()) do
+				if d:IsA("BasePart") and d.CanCollide then
+					noclipSaved[d] = true
+					d.CanCollide = false
+				end
+			end
+		end)
+	else
+		for part in pairs(noclipSaved) do
+			if part.Parent then part.CanCollide = true end
+		end
+		noclipSaved = {}
+	end
+end
+
+local function setInfJump(on)
+	if infJumpConn then infJumpConn:Disconnect() infJumpConn = nil end
+	if on then
+		infJumpConn = UIS.JumpRequest:Connect(function()
+			local h = getHum()
+			if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
+		end)
+	end
+end
+
+---------------------------------------------------------------------
+-- ТОСТЫ и КОНСОЛЬ СКРИПТОВ
+---------------------------------------------------------------------
+local function toast(text, isErr)
+	text = tostring(text):sub(1, 140)
+	local l = create("TextLabel", {
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, 50),
+		Size = UDim2.fromOffset(0, 34),
+		AutomaticSize = Enum.AutomaticSize.X,
+		BackgroundColor3 = Theme.Panel,
+		Text = text,
+		TextSize = 16,
+		TextColor3 = isErr and Color3.fromRGB(255, 110, 110) or Theme.Text,
+		Font = Theme.Font,
+		BorderSizePixel = 0,
+	}, gui)
+	create("UICorner", { CornerRadius = UDim.new(0, 10) }, l)
+	create("UIPadding", { PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, 14) }, l)
+	create("UIStroke", { Color = Theme.Accent, Thickness = 1.5, Transparency = 0.3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, l)
+	tw(l, 0.3, { Position = UDim2.new(0.5, 0, 1, -16) }, Enum.EasingStyle.Back)
+	task.delay(2.6, function()
+		if l.Parent then
+			local t = tw(l, 0.25, { Position = UDim2.new(0.5, 0, 1, 50) })
+			t.Completed:Connect(function() l:Destroy() end)
+		end
+	end)
+end
+
+local ConsoleLog, consoleRefresh = {}, nil
+local function consoleAdd(text, kind)
+	table.insert(ConsoleLog, { text = tostring(text), kind = kind or "print" })
+	if #ConsoleLog > 200 then table.remove(ConsoleLog, 1) end
+	if consoleRefresh then consoleRefresh() end
+end
+
+---------------------------------------------------------------------
+-- МИНИ-ЯЗЫК СКРИПТОВ (ЭКСПЕРИМЕНТАЛЬНО)
+-- В Roblox на клиенте нет loadstring, поэтому тут свой маленький
+-- интерпретатор: синтаксис как у Lua, но с безопасным набором команд.
+---------------------------------------------------------------------
+-- ПУЛЯ: летит, РЕАЛЬНО попадает и наносит ЛОКАЛЬНЫЙ урон (виден только тебе)
+local function fireBullet(speed, size, color, damage)
+	local root = getRoot()
+	if not root then return nil end
+	speed = math.clamp(tonumber(speed) or 150, 10, 1000)
+	size = math.clamp(tonumber(size) or 1.5, 0.3, 20)
+	damage = math.max(tonumber(damage) or 0, 0)
+	if typeof(color) ~= "Color3" then color = Theme.Accent end
+
+	local dir = workspace.CurrentCamera.CFrame.LookVector
+	local p = Instance.new("Part")
+	p.Shape = Enum.PartType.Ball
+	p.Size = Vector3.new(size, size, size)
+	p.Material = Enum.Material.Neon
+	p.Color = color
+	p.Anchored = true
+	p.CanCollide = false
+	p.CanQuery = false
+	p.CanTouch = false
+	p.CastShadow = false
+	p.Position = root.Position + Vector3.new(0, 1, 0) + dir * 3
+	p.Parent = workspace
+
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { player.Character, p }
+
+	local function burst(pos)
+		local fxp = create("Part", {
+			Shape = Enum.PartType.Ball,
+			Size = Vector3.new(size, size, size),
+			Material = Enum.Material.Neon,
+			Color = color,
+			Anchored = true,
+			CanCollide = false,
+			CanQuery = false,
+			CanTouch = false,
+			Position = pos,
+		}, workspace)
+		tw(fxp, 0.25, { Size = Vector3.new(size * 4, size * 4, size * 4), Transparency = 1 })
+		Debris:AddItem(fxp, 0.3)
+	end
+
+	local function findHumanoid(inst)
+		local m = inst
+		while m and m ~= workspace do
+			local h = m:FindFirstChildOfClass("Humanoid")
+			if h then return h, m end
+			m = m.Parent
+		end
+		return nil, nil
+	end
+
+	local function hurt(hum, model, hitPart)
+		hum.Health = math.max(0, hum.Health - damage)
+		-- красная вспышка по модели
+		local hl = create("Highlight", {
+			FillColor = Color3.fromRGB(255, 60, 60),
+			FillTransparency = 0.35,
+			OutlineTransparency = 1,
+			Adornee = model,
+		}, model)
+		tw(hl, 0.35, { FillTransparency = 1 })
+		Debris:AddItem(hl, 0.4)
+		-- всплывающее число урона
+		local head = model:FindFirstChild("Head") or hitPart
+		local bb = create("BillboardGui", {
+			Size = UDim2.fromOffset(120, 40),
+			StudsOffset = Vector3.new(0, 3, 0),
+			AlwaysOnTop = true,
+			Adornee = head,
+		}, head)
+		local lb = create("TextLabel", {
+			Size = UDim2.fromScale(1, 1),
+			BackgroundTransparency = 1,
+			Text = "-" .. tostring(math.floor(damage + 0.5)),
+			TextScaled = true,
+			Font = Enum.Font.GothamBold,
+			TextColor3 = Color3.fromRGB(255, 80, 80),
+			TextStrokeTransparency = 0,
+		}, bb)
+		tw(bb, 0.7, { StudsOffset = Vector3.new(0, 5.5, 0) })
+		tw(lb, 0.7, { TextTransparency = 1, TextStrokeTransparency = 1 })
+		Debris:AddItem(bb, 0.8)
+	end
+
+	local life = 0
+	local conn
+	conn = RS.Heartbeat:Connect(function(dt)
+		life += dt
+		if not p.Parent or life > 3 then
+			conn:Disconnect()
+			if p.Parent then p:Destroy() end
+			return
+		end
+		local step = dir * speed * dt
+		local res
+		local ok, r = pcall(function() return workspace:Spherecast(p.Position, size / 2, step, params) end)
+		if ok then res = r else res = workspace:Raycast(p.Position, step, params) end
+		if res then
+			conn:Disconnect()
+			burst(res.Position)
+			p:Destroy()
+			local hum, model = findHumanoid(res.Instance)
+			if hum and hum.Health > 0 and damage > 0 then hurt(hum, model, res.Instance) end
+		else
+			p.Position = p.Position + step
+		end
+	end)
+	return p
+end
+
+local Lang = {}
+do
+	local KEYWORDS = {}
+	for _, k in ipairs({ "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "if", "in", "local", "nil", "not", "or", "return", "then", "true", "while" }) do
+		KEYWORDS[k] = true
+	end
+
+	local function lerr(line, msg)
+		error("строка " .. tostring(line) .. ": " .. msg, 0)
+	end
+
+	---------------- ЛЕКСЕР ----------------
+	function Lang.tokenize(src)
+		local toks, i, line, n = {}, 1, 1, #src
+		local function push(t, v) toks[#toks + 1] = { t = t, v = v, line = line } end
+		local ESC = { n = "\n", t = "\t", r = "\r", ["\\"] = "\\", ['"'] = '"', ["'"] = "'" }
+		while i <= n do
+			local c = src:sub(i, i)
+			if c == "\n" then
+				line += 1
+				i += 1
+			elseif c:match("%s") then
+				i += 1
+			elseif c == "-" and src:sub(i + 1, i + 1) == "-" then
+				if src:sub(i, i + 3) == "--[[" then
+					local e = src:find("]]", i + 4, true)
+					local chunk = src:sub(i, e and e + 1 or n)
+					for _ in chunk:gmatch("\n") do line += 1 end
+					i = e and e + 2 or n + 1
+				else
+					local e = src:find("\n", i, true)
+					i = e or n + 1
+				end
+			elseif c:match("[%a_]") then
+				local s = src:match("^[%w_]+", i)
+				i += #s
+				push(KEYWORDS[s] and "kw" or "name", s)
+			elseif c:match("%d") or (c == "." and src:sub(i + 1, i + 1):match("%d")) then
+				local s = src:match("^%d+%.?%d*[eE][%+%-]?%d+", i)
+					or src:match("^%.%d+[eE][%+%-]?%d+", i)
+					or src:match("^%d+%.?%d*", i)
+					or src:match("^%.%d+", i)
+				i += #s
+				push("num", s)
+			elseif c == '"' or c == "'" then
+				local j, buf = i + 1, {}
+				while true do
+					local ch = src:sub(j, j)
+					if ch == "" or ch == "\n" then lerr(line, "незакрытая строка") end
+					if ch == c then break end
+					if ch == "\\" then
+						local nx = src:sub(j + 1, j + 1)
+						buf[#buf + 1] = ESC[nx] or nx
+						j += 2
+					else
+						buf[#buf + 1] = ch
+						j += 1
+					end
+				end
+				push("str", table.concat(buf))
+				i = j + 1
+			else
+				local three, two = src:sub(i, i + 2), src:sub(i, i + 1)
+				if three == "..." then
+					push("op", "...")
+					i += 3
+				elseif two == "==" or two == "~=" or two == "<=" or two == ">=" or two == ".." then
+					push("op", two)
+					i += 2
+				elseif ("+-*/%^#<>=(){}[];:,."):find(c, 1, true) then
+					push("op", c)
+					i += 1
+				else
+					lerr(line, "неизвестный символ '" .. c .. "'")
+				end
+			end
+		end
+		toks[#toks + 1] = { t = "eof", v = "<конец>", line = line }
+		return toks
+	end
+
+	---------------- ПАРСЕР ----------------
+	local BIN = {
+		["or"] = { 1, 1 }, ["and"] = { 2, 2 },
+		["<"] = { 3, 3 }, [">"] = { 3, 3 }, ["<="] = { 3, 3 }, [">="] = { 3, 3 }, ["~="] = { 3, 3 }, ["=="] = { 3, 3 },
+		[".."] = { 9, 8 }, ["+"] = { 10, 10 }, ["-"] = { 10, 10 },
+		["*"] = { 11, 11 }, ["/"] = { 11, 11 }, ["%"] = { 11, 11 }, ["^"] = { 14, 13 },
+	}
+
+	function Lang.parse(src)
+		local toks = Lang.tokenize(src)
+		local pos = 1
+		local parseExpr, parseBlock, parseStatement, parseSuffixed, parseFuncBody, parseSimple, parseTable
+
+		local function check(t, v)
+			local k = toks[pos]
+			return k.t == t and (v == nil or k.v == v)
+		end
+		local function nextTok()
+			local k = toks[pos]
+			if k.t ~= "eof" then pos += 1 end
+			return k
+		end
+		local function accept(t, v)
+			if check(t, v) then return nextTok() end
+			return nil
+		end
+		local function expect(t, v)
+			if check(t, v) then return nextTok() end
+			local k = toks[pos]
+			lerr(k.line, "ожидалось '" .. tostring(v or t) .. "', а найдено '" .. tostring(k.v) .. "'")
+		end
+		local function blockEnd()
+			local k = toks[pos]
+			return k.t == "eof" or (k.t == "kw" and (k.v == "end" or k.v == "else" or k.v == "elseif"))
+		end
+		local function binOp()
+			local k = toks[pos]
+			if (k.t == "op" or (k.t == "kw" and (k.v == "and" or k.v == "or"))) and BIN[k.v] then return k.v end
+			return nil
+		end
+		local function parseArgs()
+			expect("op", "(")
+			local args = {}
+			if not check("op", ")") then
+				args[1] = parseExpr()
+				while accept("op", ",") do args[#args + 1] = parseExpr() end
+			end
+			expect("op", ")")
+			return args
+		end
+
+		parseBlock = function()
+			local stmts = {}
+			while not blockEnd() do
+				stmts[#stmts + 1] = parseStatement()
+				accept("op", ";")
+			end
+			return stmts
+		end
+
+		parseFuncBody = function(line, isMethod)
+			expect("op", "(")
+			local params = {}
+			if isMethod then params[1] = "self" end
+			if not check("op", ")") then
+				params[#params + 1] = expect("name").v
+				while accept("op", ",") do params[#params + 1] = expect("name").v end
+			end
+			expect("op", ")")
+			local body = parseBlock()
+			expect("kw", "end")
+			return { t = "Func", params = params, body = body, line = line }
+		end
+
+		parseTable = function()
+			local line = nextTok().line
+			local items = {}
+			while not check("op", "}") do
+				if check("op", "[") then
+					nextTok()
+					local kx = parseExpr()
+					expect("op", "]")
+					expect("op", "=")
+					items[#items + 1] = { k = kx, v = parseExpr() }
+				elseif check("name") and toks[pos + 1].t == "op" and toks[pos + 1].v == "=" then
+					local nm = nextTok().v
+					nextTok()
+					items[#items + 1] = { k = { t = "Str", v = nm }, v = parseExpr() }
+				else
+					items[#items + 1] = { v = parseExpr() }
+				end
+				if not (accept("op", ",") or accept("op", ";")) then break end
+			end
+			expect("op", "}")
+			return { t = "Table", items = items, line = line }
+		end
+
+		parseSuffixed = function()
+			local k = toks[pos]
+			local e
+			if k.t == "name" then
+				nextTok()
+				e = { t = "Var", name = k.v, line = k.line }
+			elseif k.t == "op" and k.v == "(" then
+				nextTok()
+				e = { t = "Paren", e = parseExpr(), line = k.line }
+				expect("op", ")")
+			else
+				lerr(k.line, "неожиданный '" .. tostring(k.v) .. "'")
+			end
+			while true do
+				local t = toks[pos]
+				if t.t == "op" and t.v == "." then
+					nextTok()
+					local nm = expect("name").v
+					e = { t = "Index", obj = e, key = { t = "Str", v = nm }, line = t.line }
+				elseif t.t == "op" and t.v == "[" then
+					nextTok()
+					local kx = parseExpr()
+					expect("op", "]")
+					e = { t = "Index", obj = e, key = kx, line = t.line }
+				elseif t.t == "op" and t.v == ":" then
+					nextTok()
+					local nm = expect("name").v
+					e = { t = "MethCall", obj = e, name = nm, args = parseArgs(), line = t.line }
+				elseif t.t == "op" and t.v == "(" then
+					e = { t = "Call", f = e, args = parseArgs(), line = t.line }
+				else
+					break
+				end
+			end
+			return e
+		end
+
+		parseSimple = function()
+			local k = toks[pos]
+			if k.t == "num" then
+				nextTok()
+				return { t = "Num", v = tonumber(k.v) or 0, line = k.line }
+			elseif k.t == "str" then
+				nextTok()
+				return { t = "Str", v = k.v, line = k.line }
+			elseif k.t == "kw" then
+				if k.v == "nil" then nextTok() return { t = "Nil", line = k.line }
+				elseif k.v == "true" then nextTok() return { t = "Bool", v = true, line = k.line }
+				elseif k.v == "false" then nextTok() return { t = "Bool", v = false, line = k.line }
+				elseif k.v == "function" then nextTok() return parseFuncBody(k.line, false) end
+			elseif k.t == "op" and k.v == "{" then
+				return parseTable()
+			end
+			return parseSuffixed()
+		end
+
+		local function parseSub(limit)
+			local k = toks[pos]
+			local left
+			if (k.t == "kw" and k.v == "not") or (k.t == "op" and (k.v == "-" or k.v == "#")) then
+				nextTok()
+				left = { t = "Un", op = k.v, e = parseSub(12), line = k.line }
+			else
+				left = parseSimple()
+			end
+			while true do
+				local op = binOp()
+				if not op or BIN[op][1] <= limit then break end
+				local ln = toks[pos].line
+				nextTok()
+				local right = parseSub(BIN[op][2])
+				left = { t = "Bin", op = op, a = left, b = right, line = ln }
+			end
+			return left
+		end
+		parseExpr = function() return parseSub(0) end
+
+		parseStatement = function()
+			local k = toks[pos]
+			local line = k.line
+			if k.t == "kw" then
+				if k.v == "local" then
+					nextTok()
+					if accept("kw", "function") then
+						local name = expect("name").v
+						return { t = "LocalFunc", name = name, f = parseFuncBody(line, false), line = line }
+					end
+					local names = { expect("name").v }
+					while accept("op", ",") do names[#names + 1] = expect("name").v end
+					local exprs = {}
+					if accept("op", "=") then
+						exprs[1] = parseExpr()
+						while accept("op", ",") do exprs[#exprs + 1] = parseExpr() end
+					end
+					return { t = "Local", names = names, exprs = exprs, line = line }
+				elseif k.v == "function" then
+					nextTok()
+					local target = { t = "Var", name = expect("name").v, line = line }
+					local isMethod = false
+					while check("op", ".") or check("op", ":") do
+						local sep = nextTok().v
+						local nm = expect("name").v
+						target = { t = "Index", obj = target, key = { t = "Str", v = nm }, line = line }
+						if sep == ":" then isMethod = true break end
+					end
+					local f = parseFuncBody(line, isMethod)
+					return { t = "Assign", targets = { target }, exprs = { f }, line = line }
+				elseif k.v == "if" then
+					nextTok()
+					local cond = parseExpr()
+					expect("kw", "then")
+					local clauses = { { cond = cond, body = parseBlock() } }
+					local elseBody
+					while true do
+						if accept("kw", "elseif") then
+							local c2 = parseExpr()
+							expect("kw", "then")
+							clauses[#clauses + 1] = { cond = c2, body = parseBlock() }
+						elseif accept("kw", "else") then
+							elseBody = parseBlock()
+							expect("kw", "end")
+							break
+						else
+							expect("kw", "end")
+							break
+						end
+					end
+					return { t = "If", clauses = clauses, elseBody = elseBody, line = line }
+				elseif k.v == "while" then
+					nextTok()
+					local cond = parseExpr()
+					expect("kw", "do")
+					local body = parseBlock()
+					expect("kw", "end")
+					return { t = "While", cond = cond, body = body, line = line }
+				elseif k.v == "for" then
+					nextTok()
+					local n1 = expect("name").v
+					if accept("op", "=") then
+						local a = parseExpr()
+						expect("op", ",")
+						local b = parseExpr()
+						local c
+						if accept("op", ",") then c = parseExpr() end
+						expect("kw", "do")
+						local body = parseBlock()
+						expect("kw", "end")
+						return { t = "NumFor", var = n1, a = a, b = b, c = c, body = body, line = line }
+					else
+						local names = { n1 }
+						while accept("op", ",") do names[#names + 1] = expect("name").v end
+						expect("kw", "in")
+						local e = parseExpr()
+						expect("kw", "do")
+						local body = parseBlock()
+						expect("kw", "end")
+						return { t = "GenFor", names = names, e = e, body = body, line = line }
+					end
+				elseif k.v == "return" then
+					nextTok()
+					local e
+					if not blockEnd() and not check("op", ";") then e = parseExpr() end
+					return { t = "Return", e = e, line = line }
+				elseif k.v == "break" then
+					nextTok()
+					return { t = "Break", line = line }
+				elseif k.v == "do" then
+					nextTok()
+					local body = parseBlock()
+					expect("kw", "end")
+					return { t = "Do", body = body, line = line }
+				end
+			end
+			-- вызов функции или присваивание
+			local e = parseSuffixed()
+			if check("op", "=") or check("op", ",") then
+				local targets = { e }
+				while accept("op", ",") do targets[#targets + 1] = parseSuffixed() end
+				expect("op", "=")
+				local exprs = { parseExpr() }
+				while accept("op", ",") do exprs[#exprs + 1] = parseExpr() end
+				for _, t in ipairs(targets) do
+					if t.t ~= "Var" and t.t ~= "Index" then lerr(line, "сюда нельзя присвоить значение") end
+				end
+				return { t = "Assign", targets = targets, exprs = exprs, line = line }
+			end
+			if e.t ~= "Call" and e.t ~= "MethCall" then
+				lerr(line, "ожидалась команда (вызов функции или присваивание)")
+			end
+			return { t = "ExprStat", e = e, line = line }
+		end
+
+		local body = parseBlock()
+		if toks[pos].t ~= "eof" then
+			lerr(toks[pos].line, "лишнее '" .. tostring(toks[pos].v) .. "'")
+		end
+		return body
+	end
+
+	---------------- ИНТЕРПРЕТАТОР ----------------
+	local ALLOWED_METHODS = {}
+	for _, m in ipairs({
+		"FindFirstChild", "FindFirstChildOfClass", "FindFirstChildWhichIsA", "GetChildren", "GetDescendants",
+		"IsA", "Clone", "ChangeState", "MoveTo", "GetPivot", "PivotTo", "GetAttribute", "SetAttribute",
+		"GetMass", "ApplyImpulse", "ApplyAngularImpulse",
+	}) do
+		ALLOWED_METHODS[m] = true
+	end
+
+	local BINFN = {
+		["+"] = function(a, b) return a + b end,
+		["-"] = function(a, b) return a - b end,
+		["*"] = function(a, b) return a * b end,
+		["/"] = function(a, b) return a / b end,
+		["%"] = function(a, b) return a % b end,
+		["^"] = function(a, b) return a ^ b end,
+		[".."] = function(a, b) return a .. b end,
+		["=="] = function(a, b) return a == b end,
+		["~="] = function(a, b) return a ~= b end,
+		["<"] = function(a, b) return a < b end,
+		["<="] = function(a, b) return a <= b end,
+		[">"] = function(a, b) return a > b end,
+		[">="] = function(a, b) return a >= b end,
+	}
+
+	function Lang.execute(ast, G, ctrl)
+		local scriptFn = setmetatable({}, { __mode = "k" })
+		local eval, exec, execBlock
+
+		local function rt(node, msg)
+			error("строка " .. tostring(node and node.line or "?") .. ": " .. msg, 0)
+		end
+		local function truthy(v) return v ~= nil and v ~= false end
+		local function newScope(p) return { v = {}, d = {}, p = p } end
+		local function findScope(s, name)
+			while s do
+				if s.d[name] then return s end
+				s = s.p
+			end
+			return nil
+		end
+		local function getVar(s, name)
+			local f = findScope(s, name)
+			if f then return f.v[name] end
+			return G[name]
+		end
+		local function setVar(s, name, val)
+			local f = findScope(s, name)
+			if f then f.v[name] = val else G[name] = val end
+		end
+		local function declare(s, name, val)
+			s.d[name] = true
+			s.v[name] = val
+		end
+		local function tick(node)
+			ctrl.steps += 1
+			if ctrl.stopFlag then error("__STOP__", 0) end
+			if ctrl.steps > 60000 then
+				ctrl.steps = 0
+				rt(node, "слишком долго без wait() — добавь wait() в цикл")
+			end
+		end
+
+		local function indexValue(obj, key, node)
+			if obj == nil then rt(node, "обращение к nil (поле '" .. tostring(key) .. "')") end
+			local ty = typeof(obj)
+			if ty == "table" then return obj[key] end
+			local ok, v = pcall(function() return obj[key] end)
+			if not ok then rt(node, "нет поля '" .. tostring(key) .. "'") end
+			if v == game then return nil end
+			return v
+		end
+
+		local function setIndex(obj, key, val, node)
+			if obj == nil then rt(node, "присваивание в nil") end
+			local ty = typeof(obj)
+			if ty == "table" then
+				obj[key] = val
+			elseif ty == "Instance" then
+				local ok = pcall(function() obj[key] = val end)
+				if not ok then rt(node, "не получилось изменить '" .. tostring(key) .. "'") end
+			else
+				rt(node, "это значение нельзя изменять")
+			end
+		end
+
+		local function callFn(f, args, n, node)
+			if type(f) ~= "function" then rt(node, "это не функция") end
+			if scriptFn[f] then return f(table.unpack(args, 1, n)) end
+			local res = table.pack(pcall(f, table.unpack(args, 1, n)))
+			if not res[1] then
+				local m = tostring(res[2])
+				if m == "__STOP__" then error(m, 0) end
+				rt(node, m)
+			end
+			return res[2]
+		end
+
+		local function makeFunc(node, scope)
+			local f = function(...)
+				local fs = newScope(scope)
+				local args = { ... }
+				for i, name in ipairs(node.params) do declare(fs, name, args[i]) end
+				local sig, val = execBlock(node.body, fs)
+				if sig == "return" then return val end
+				return nil
+			end
+			scriptFn[f] = true
+			return f
+		end
+
+		eval = function(n, scope)
+			local t = n.t
+			if t == "Num" or t == "Str" or t == "Bool" then
+				return n.v
+			elseif t == "Nil" then
+				return nil
+			elseif t == "Var" then
+				return getVar(scope, n.name)
+			elseif t == "Paren" then
+				return eval(n.e, scope)
+			elseif t == "Func" then
+				return makeFunc(n, scope)
+			elseif t == "Table" then
+				local tbl, idx = {}, 1
+				for _, it in ipairs(n.items) do
+					if it.k then
+						tbl[eval(it.k, scope)] = eval(it.v, scope)
+					else
+						tbl[idx] = eval(it.v, scope)
+						idx += 1
+					end
+				end
+				return tbl
+			elseif t == "Index" then
+				return indexValue(eval(n.obj, scope), eval(n.key, scope), n)
+			elseif t == "Call" then
+				local f = eval(n.f, scope)
+				local args = {}
+				for i = 1, #n.args do args[i] = eval(n.args[i], scope) end
+				return callFn(f, args, #n.args, n)
+			elseif t == "MethCall" then
+				local obj = eval(n.obj, scope)
+				if obj == nil then rt(n, "вызов метода '" .. n.name .. "' у nil") end
+				local args = {}
+				for i = 1, #n.args do args[i] = eval(n.args[i], scope) end
+				if typeof(obj) == "Instance" then
+					if not ALLOWED_METHODS[n.name] then rt(n, "метод '" .. n.name .. "' не разрешён") end
+					local ok, res = pcall(function()
+						return obj[n.name](obj, table.unpack(args, 1, #n.args))
+					end)
+					if not ok then rt(n, tostring(res)) end
+					if res == game then return nil end
+					return res
+				end
+				local f = indexValue(obj, n.name, n)
+				if type(f) ~= "function" then rt(n, "'" .. n.name .. "' — не функция") end
+				return callFn(f, { obj, table.unpack(args, 1, #n.args) }, #n.args + 1, n)
+			elseif t == "Un" then
+				local v = eval(n.e, scope)
+				if n.op == "not" then return not truthy(v) end
+				if n.op == "-" then
+					local ok, r = pcall(function() return -v end)
+					if not ok then rt(n, "нельзя взять минус от этого значения") end
+					return r
+				end
+				if type(v) == "string" or type(v) == "table" then return #v end
+				rt(n, "у этого значения нет длины")
+			elseif t == "Bin" then
+				local op = n.op
+				if op == "and" then
+					local a = eval(n.a, scope)
+					if not truthy(a) then return a end
+					return eval(n.b, scope)
+				elseif op == "or" then
+					local a = eval(n.a, scope)
+					if truthy(a) then return a end
+					return eval(n.b, scope)
+				end
+				local a, b = eval(n.a, scope), eval(n.b, scope)
+				local ok, r = pcall(BINFN[op], a, b)
+				if not ok then rt(n, "нельзя выполнить '" .. op .. "' для " .. typeof(a) .. " и " .. typeof(b)) end
+				return r
+			end
+			rt(n, "неизвестный узел " .. tostring(t))
+		end
+
+		execBlock = function(stmts, scope)
+			for i = 1, #stmts do
+				local sig, val = exec(stmts[i], scope)
+				if sig then return sig, val end
+			end
+			return nil
+		end
+
+		exec = function(s, scope)
+			tick(s)
+			local t = s.t
+			if t == "ExprStat" then
+				eval(s.e, scope)
+			elseif t == "Local" then
+				local vals = {}
+				for i = 1, #s.exprs do vals[i] = eval(s.exprs[i], scope) end
+				for i, name in ipairs(s.names) do declare(scope, name, vals[i]) end
+			elseif t == "LocalFunc" then
+				declare(scope, s.name, nil)
+				scope.v[s.name] = makeFunc(s.f, scope)
+			elseif t == "Assign" then
+				local vals = {}
+				for i = 1, #s.exprs do vals[i] = eval(s.exprs[i], scope) end
+				for i, tg in ipairs(s.targets) do
+					if tg.t == "Var" then
+						setVar(scope, tg.name, vals[i])
+					else
+						setIndex(eval(tg.obj, scope), eval(tg.key, scope), vals[i], tg)
+					end
+				end
+			elseif t == "If" then
+				for _, c in ipairs(s.clauses) do
+					if truthy(eval(c.cond, scope)) then
+						return execBlock(c.body, newScope(scope))
+					end
+				end
+				if s.elseBody then return execBlock(s.elseBody, newScope(scope)) end
+			elseif t == "While" then
+				while truthy(eval(s.cond, scope)) do
+					tick(s)
+					local sig, val = execBlock(s.body, newScope(scope))
+					if sig == "break" then break end
+					if sig == "return" then return sig, val end
+				end
+			elseif t == "NumFor" then
+				local a, b = eval(s.a, scope), eval(s.b, scope)
+				local c = 1
+				if s.c then c = eval(s.c, scope) end
+				if type(a) ~= "number" or type(b) ~= "number" or type(c) ~= "number" then
+					rt(s, "в цикле for нужны числа")
+				end
+				if c == 0 then rt(s, "шаг цикла не может быть 0") end
+				local i = a
+				while (c > 0 and i <= b) or (c < 0 and i >= b) do
+					tick(s)
+					local ls = newScope(scope)
+					declare(ls, s.var, i)
+					local sig, val = execBlock(s.body, ls)
+					if sig == "break" then break end
+					if sig == "return" then return sig, val end
+					i += c
+				end
+			elseif t == "GenFor" then
+				local it = eval(s.e, scope)
+				local list
+				if type(it) == "table" and it.__liza_iter then
+					list = it.items
+				else
+					rt(s, "for ... in ждёт pairs(таблица) или ipairs(таблица)")
+				end
+				for _, kv in ipairs(list) do
+					tick(s)
+					local ls = newScope(scope)
+					declare(ls, s.names[1], kv[1])
+					if s.names[2] then declare(ls, s.names[2], kv[2]) end
+					local sig, val = execBlock(s.body, ls)
+					if sig == "break" then break end
+					if sig == "return" then return sig, val end
+				end
+			elseif t == "Return" then
+				local v
+				if s.e then v = eval(s.e, scope) end
+				return "return", v
+			elseif t == "Break" then
+				return "break"
+			elseif t == "Do" then
+				return execBlock(s.body, newScope(scope))
+			end
+			return nil
+		end
+
+		execBlock(ast, newScope(nil))
+	end
+end
+
+---------------------------------------------------------------------
+-- ЗАПУСК СКРИПТОВ + ВСТРОЕННЫЕ КОМАНДЫ
+---------------------------------------------------------------------
+local scriptEditorOpen = false
+local ScriptRuns = {}
+local runScript
+
+do
+	local function makeGlobals(ctrl)
+		local G = {}
+		local spawned = setmetatable({}, { __mode = "k" })
+
+		local function fmt(...)
+			local p = {}
+			for i = 1, select("#", ...) do p[i] = tostring((select(i, ...))) end
+			return table.concat(p, " ")
+		end
+		local function vec3(a, b, c)
+			if typeof(a) == "Vector3" then return a end
+			if typeof(a) == "CFrame" then return a.Position end
+			if type(a) == "number" then return Vector3.new(a, b or 0, c or 0) end
+			error("нужен Vector3 или три числа", 0)
+		end
+		local function copyLib(lib)
+			local t = {}
+			for k, v in pairs(lib) do t[k] = v end
+			return t
+		end
+		local function iterOf(t, ordered)
+			if type(t) ~= "table" then error("нужна таблица", 0) end
+			local items = {}
+			if ordered then
+				for k, v in ipairs(t) do items[#items + 1] = { k, v } end
+			else
+				for k, v in pairs(t) do items[#items + 1] = { k, v } end
+			end
+			return { __liza_iter = true, items = items }
+		end
+
+		-- вывод и время
+		G.print = function(...) consoleAdd(fmt(...), "print") end
+		G.warn = function(...) consoleAdd(fmt(...), "warn") end
+		G.wait = function(t)
+			ctrl.steps = 0
+			task.wait(math.clamp(tonumber(t) or 0.03, 0.03, 60))
+			if ctrl.stopFlag then error("__STOP__", 0) end
+			return t
+		end
+		G.tick = os.clock
+		G.notify = function(...) toast(fmt(...)) end
+
+		-- базовые функции и библиотеки
+		G.tostring, G.tonumber, G.type, G.typeof = tostring, tonumber, type, typeof
+		G.pairs = function(t) return iterOf(t, false) end
+		G.ipairs = function(t) return iterOf(t, true) end
+		G.math = copyLib(math)
+		G.string = { format = string.format, sub = string.sub, upper = string.upper, lower = string.lower, rep = string.rep, len = string.len }
+		G.table = { insert = table.insert, remove = table.remove, concat = table.concat, sort = table.sort, unpack = table.unpack }
+		G.Vector3 = { new = Vector3.new, zero = Vector3.zero, one = Vector3.one, xAxis = Vector3.xAxis, yAxis = Vector3.yAxis, zAxis = Vector3.zAxis }
+		G.Color3 = { new = Color3.new, fromRGB = Color3.fromRGB, fromHSV = Color3.fromHSV, fromHex = Color3.fromHex }
+		G.CFrame = { new = CFrame.new, Angles = CFrame.Angles, lookAt = CFrame.lookAt }
+		G.Enum = Enum
+
+		-- объекты игры
+		G.player = player
+		G.character = player.Character
+		G.humanoid = getHum()
+		G.root = getRoot()
+		G.camera = workspace.CurrentCamera
+		G.workspace = workspace
+		G.mouse = setmetatable({}, {
+			__index = function(_, k)
+				if k == "Hit" then return mouse.Hit end
+				if k == "Position" then return mouse.Hit and mouse.Hit.Position end
+				if k == "Target" then return mouse.Target end
+				return nil
+			end,
+		})
+
+		-- команды
+		G.speed = function(n)
+			local h = getHum()
+			if h then h.WalkSpeed = tonumber(n) or 16 end
+		end
+		G.jump = function(n)
+			local h = getHum()
+			if h then
+				h.UseJumpPower = true
+				h.JumpPower = tonumber(n) or 50
+			end
+		end
+		G.dash = function(p)
+			local r = getRoot()
+			if r then r.AssemblyLinearVelocity = r.CFrame.LookVector * (tonumber(p) or 100) + Vector3.new(0, 20, 0) end
+		end
+		G.launch = function(a, b, c)
+			local r = getRoot()
+			if r then r.AssemblyLinearVelocity = vec3(a, b, c) end
+		end
+		G.teleport = function(a, b, c)
+			local r = getRoot()
+			if r then r.CFrame = CFrame.new(vec3(a, b, c)) end
+		end
+
+		local function newPart(pos, size, color, life)
+			local p = Instance.new("Part")
+			p.Anchored = true
+			p.CanCollide = false
+			p.CanQuery = false
+			p.CanTouch = false
+			p.CastShadow = false
+			p.Size = typeof(size) == "Vector3" and size or Vector3.new(1, 1, 1)
+			p.Color = typeof(color) == "Color3" and color or Color3.fromRGB(255, 140, 26)
+			p.Material = Enum.Material.SmoothPlastic
+			p.Position = vec3(pos)
+			p.Parent = workspace
+			spawned[p] = true
+			Debris:AddItem(p, math.clamp(tonumber(life) or 5, 0.1, 60))
+			return p
+		end
+		G.spawnPart = newPart
+		G.shoot = function(speed, size, color, dmg)
+			return fireBullet(speed, size, color, dmg or 20)
+		end
+		G.destroy = function(o)
+			if typeof(o) == "Instance" and spawned[o] then o:Destroy() end
+		end
+		G.tween = function(o, props, t)
+			if typeof(o) ~= "Instance" or type(props) ~= "table" then
+				error("tween(объект, {Свойство = значение}, время)", 0)
+			end
+			TweenService:Create(o, TweenInfo.new(math.clamp(tonumber(t) or 1, 0.03, 60)), props):Play()
+		end
+		return G
+	end
+
+	runScript = function(src, fromEditor)
+		local okp, ast = pcall(Lang.parse, src)
+		if not okp then
+			consoleAdd(tostring(ast), "error")
+			if not scriptEditorOpen then toast("Ошибка: " .. tostring(ast), true) end
+			return nil
+		end
+		if #ScriptRuns >= 8 then
+			consoleAdd("слишком много запущенных скриптов (максимум 8)", "error")
+			return nil
+		end
+		local ctrl = { steps = 0, stopFlag = false }
+		local run = { ctrl = ctrl }
+		table.insert(ScriptRuns, run)
+		task.spawn(function()
+			local G = makeGlobals(ctrl)
+			local ok, err = pcall(Lang.execute, ast, G, ctrl)
+			if not ok and tostring(err) ~= "__STOP__" then
+				consoleAdd(tostring(err), "error")
+				if not scriptEditorOpen then toast("Ошибка скрипта: " .. tostring(err), true) end
+			end
+			local i = table.find(ScriptRuns, run)
+			if i then table.remove(ScriptRuns, i) end
+			if fromEditor then consoleAdd("— скрипт завершён —", "info") end
+		end)
+		return run
+	end
+end
+
+local function stopAllScripts()
+	for _, r in ipairs(ScriptRuns) do r.ctrl.stopFlag = true end
+	ScriptRuns = {}
+end
+
+---------------------------------------------------------------------
+-- ТУЛЫ: данные, пресеты, сборка
+---------------------------------------------------------------------
+local ShapeNames = { "Блок", "Шар", "Цилиндр", "Клин" }
+local MatNames = { "Пластик", "Металл", "Неон", "Дерево", "Стекло", "Камень", "Лёд" }
+local MatMap = {
+	["Пластик"] = Enum.Material.SmoothPlastic,
+	["Металл"] = Enum.Material.Metal,
+	["Неон"] = Enum.Material.Neon,
+	["Дерево"] = Enum.Material.Wood,
+	["Стекло"] = Enum.Material.Glass,
+	["Камень"] = Enum.Material.Slate,
+	["Лёд"] = Enum.Material.Ice,
+}
+
+local function RGB(r, g, b) return Color3.fromRGB(r, g, b) end
+local function rotCF(r) return CFrame.Angles(math.rad(r.X), math.rad(r.Y), math.rad(r.Z)) end
+
+local function pdata(shape, color, size, offset, rot, mat, transp)
+	return {
+		Shape = shape or "Блок",
+		Color = color or RGB(200, 200, 200),
+		Size = size or Vector3.new(1, 1, 1),
+		Offset = offset or Vector3.zero,
+		Rot = rot or Vector3.zero,
+		Material = mat or "Пластик",
+		Transparency = transp or 0,
+	}
+end
+local function copyParts(list)
+	local t = {}
+	for i, p in ipairs(list) do
+		t[i] = pdata(p.Shape, p.Color, p.Size, p.Offset, p.Rot, p.Material, p.Transparency)
+	end
+	return t
+end
+
+local function makePartInst(pd)
+	local part
+	if pd.Shape == "Клин" then
+		part = Instance.new("WedgePart")
+	else
+		part = Instance.new("Part")
+		if pd.Shape == "Шар" then part.Shape = Enum.PartType.Ball
+		elseif pd.Shape == "Цилиндр" then part.Shape = Enum.PartType.Cylinder end
+	end
+	part.Size = pd.Size
+	part.Color = pd.Color
+	part.Material = MatMap[pd.Material] or Enum.Material.SmoothPlastic
+	part.Transparency = pd.Transparency or 0
+	part.CanCollide = false
+	part.CastShadow = false
+	part.TopSurface = Enum.SurfaceType.Smooth
+	part.BottomSurface = Enum.SurfaceType.Smooth
+	return part
+end
+
+-- пресеты тулов (первый парт — рукоять, остальные крепятся к ней)
+local ToolPresets = {}
+do
+	local V = Vector3.new
+	local function add(name, action, parts, script)
+		table.insert(ToolPresets, { name = name, action = action, parts = parts, script = script })
+	end
+
+	add("Меч", "Рывок", {
+		pdata("Блок", RGB(110, 70, 40), V(0.4, 0.4, 1.6), nil, nil, "Дерево"),
+		pdata("Блок", RGB(150, 150, 160), V(1.8, 0.3, 0.4), V(0, 0, -0.95), nil, "Металл"),
+		pdata("Блок", RGB(220, 225, 235), V(0.3, 0.12, 3.8), V(0, 0, -3), nil, "Металл"),
+	})
+	add("Лазерный меч", "Рывок", {
+		pdata("Блок", RGB(50, 50, 58), V(0.35, 0.35, 1.2), nil, nil, "Металл"),
+		pdata("Блок", RGB(120, 120, 130), V(0.5, 0.5, 0.25), V(0, 0, -0.7), nil, "Металл"),
+		pdata("Блок", RGB(0, 200, 255), V(0.22, 0.22, 4), V(0, 0, -2.8), nil, "Неон"),
+	})
+	add("Посох мага", "Выстрел", {
+		pdata("Блок", RGB(110, 70, 40), V(0.35, 0.35, 4.2), nil, nil, "Дерево"),
+		pdata("Блок", RGB(200, 170, 80), V(0.8, 0.8, 0.25), V(0, 0, -2.1), nil, "Металл"),
+		pdata("Шар", RGB(170, 70, 255), V(1.3, 1.3, 1.3), V(0, 0, -2.8), nil, "Неон"),
+	})
+	add("Молот", "Супер-прыжок", {
+		pdata("Блок", RGB(110, 70, 40), V(0.4, 0.4, 3), nil, nil, "Дерево"),
+		pdata("Блок", RGB(140, 140, 150), V(1.8, 1.1, 1.1), V(0, 0, -1.8), nil, "Металл"),
+	})
+	add("Топор", "Рывок", {
+		pdata("Блок", RGB(110, 70, 40), V(0.35, 0.35, 2.8), nil, nil, "Дерево"),
+		pdata("Блок", RGB(200, 205, 215), V(0.22, 1.5, 1), V(0, 0.5, -1.6), nil, "Металл"),
+		pdata("Блок", RGB(90, 90, 100), V(0.3, 0.5, 0.5), V(0, -0.25, -1.5), nil, "Металл"),
+	})
+	add("Пистолет", "Выстрел", {
+		pdata("Блок", RGB(40, 40, 46), V(0.4, 1.1, 0.55), nil, nil, "Металл"),
+		pdata("Блок", RGB(90, 90, 100), V(0.35, 0.35, 1.7), V(0, 0.55, -0.7), nil, "Металл"),
+		pdata("Блок", RGB(255, 140, 26), V(0.12, 0.12, 0.12), V(0, 0.8, -1.5), nil, "Неон"),
+	})
+	add("Факел", "Нет", {
+		pdata("Блок", RGB(110, 70, 40), V(0.4, 0.4, 2.2), nil, nil, "Дерево"),
+		pdata("Шар", RGB(255, 120, 0), V(0.9, 0.9, 0.9), V(0, 0, -1.5), nil, "Неон"),
+		pdata("Шар", RGB(255, 230, 90), V(0.55, 0.55, 0.55), V(0, 0.15, -1.7), nil, "Неон"),
+	})
+	add("Щит", "Нет", {
+		pdata("Блок", RGB(110, 70, 40), V(0.35, 0.35, 0.9), nil, nil, "Дерево"),
+		pdata("Цилиндр", RGB(190, 190, 200), V(0.3, 2.8, 2.8), V(0, 0, -0.6), V(0, 90, 0), "Металл"),
+		pdata("Шар", RGB(0, 170, 255), V(0.8, 0.8, 0.8), V(0, 0, -0.9), nil, "Неон"),
+	})
+	add("Портал-палка", "Телепорт", {
+		pdata("Блок", RGB(60, 60, 70), V(0.3, 0.3, 2.6), nil, nil, "Металл"),
+		pdata("Шар", RGB(0, 255, 200), V(1, 1, 1), V(0, 0, -1.6), nil, "Неон"),
+		pdata("Цилиндр", RGB(255, 255, 255), V(0.15, 1.8, 1.8), V(0, 0, -1.6), V(0, 90, 0), "Стекло", 0.5),
+	})
+	add("Скрипт-пушка", "Скрипт", {
+		pdata("Блок", RGB(40, 40, 46), V(0.5, 0.9, 1.2), nil, nil, "Металл"),
+		pdata("Блок", RGB(90, 90, 100), V(0.45, 0.45, 2), V(0, 0.25, -1.5), nil, "Металл"),
+		pdata("Блок", RGB(255, 140, 26), V(0.6, 0.6, 0.2), V(0, 0.25, -2.5), nil, "Неон"),
+	}, [==[-- Скрипт-пушка: 3 выстрела подряд
+for i = 1, 3 do
+  shoot(160, 1.4, Color3.fromRGB(255, 140, 26))
+  wait(0.12)
+end
+]==])
+	add("Ускоритель", "Скрипт", {
+		pdata("Блок", RGB(40, 40, 46), V(0.5, 0.5, 1), nil, nil, "Металл"),
+		pdata("Клин", RGB(255, 140, 26), V(0.2, 0.8, 1.2), V(0.4, 0, -0.5), nil, "Металл"),
+		pdata("Клин", RGB(255, 140, 26), V(0.2, 0.8, 1.2), V(-0.4, 0, -0.5), nil, "Металл"),
+	}, [==[-- Ускоритель: скорость x2 на 3 секунды
+local old = humanoid.WalkSpeed
+humanoid.WalkSpeed = old * 2
+print("Ускорение!")
+wait(3)
+humanoid.WalkSpeed = old
+]==])
+end
+
+-- действия-пресеты (по клику)
+local Actions = {}
+local ActionNames = { "Нет", "Рывок", "Телепорт", "Супер-прыжок", "Выстрел", "Ускорение", "Взрыв", "Скрипт" }
+do
+	local boosting = false
+	Actions["Нет"] = function() end
+	Actions["Рывок"] = function(root)
+		root.AssemblyLinearVelocity = root.CFrame.LookVector * 120 + Vector3.new(0, 20, 0)
+	end
+	Actions["Телепорт"] = function(root)
+		if mouse.Hit then root.CFrame = CFrame.new(mouse.Hit.Position + Vector3.new(0, 3, 0)) end
+	end
+	Actions["Супер-прыжок"] = function(root)
+		local v = root.AssemblyLinearVelocity
+		root.AssemblyLinearVelocity = Vector3.new(v.X, 100, v.Z)
+	end
+	Actions["Выстрел"] = function(root, spec)
+		fireBullet(spec and spec.BulletSpeed or 150, 1.5, Theme.Accent, spec and spec.Damage or 20)
+	end
+	Actions["Ускорение"] = function()
+		local h = getHum()
+		if not h or boosting then return end
+		boosting = true
+		local old = h.WalkSpeed
+		h.WalkSpeed = old * 2
+		task.delay(3, function()
+			boosting = false
+			if h.Parent then h.WalkSpeed = old end
+		end)
+	end
+	Actions["Взрыв"] = function(root)
+		local p = create("Part", {
+			Shape = Enum.PartType.Ball,
+			Size = Vector3.new(2, 2, 2),
+			Material = Enum.Material.Neon,
+			Color = Theme.Accent,
+			Anchored = true,
+			CanCollide = false,
+			CanQuery = false,
+			CanTouch = false,
+			Position = root.Position,
+		}, workspace)
+		tw(p, 0.6, { Size = Vector3.new(24, 24, 24), Transparency = 1 })
+		Debris:AddItem(p, 0.8)
+		root.AssemblyLinearVelocity = Vector3.new(0, 70, 0)
+	end
+end
+
 local Created, nextId = {}, 0
 local AutoGive = true
 
-local Actions = {
-	["Нет"] = function() end,
-	["Рывок"] = function(root)
-		root.AssemblyLinearVelocity = root.CFrame.LookVector * 120 + Vector3.new(0, 20, 0)
-	end,
-	["Телепорт"] = function(root)
-		if mouse.Hit then root.CFrame = CFrame.new(mouse.Hit.Position + Vector3.new(0, 3, 0)) end
-	end,
-	["Супер-прыжок"] = function(root)
-		local v = root.AssemblyLinearVelocity
-		root.AssemblyLinearVelocity = Vector3.new(v.X, 100, v.Z)
-	end,
-	["Выстрел"] = function(root)
-		local p = create("Part", {
-			Shape = Enum.PartType.Ball,
-			Size = Vector3.new(1.5, 1.5, 1.5),
-			Material = Enum.Material.Neon,
-			Color = Theme.Accent,
-			CanCollide = false,
-			CFrame = root.CFrame * CFrame.new(0, 0, -3),
-		}, workspace)
-		create("BodyForce", { Force = Vector3.new(0, p:GetMass() * workspace.Gravity, 0) }, p)
-		p.AssemblyLinearVelocity = workspace.CurrentCamera.CFrame.LookVector * 150
-		Debris:AddItem(p, 3)
-	end,
-}
-local ActionNames = { "Нет", "Рывок", "Телепорт", "Супер-прыжок", "Выстрел" }
-local ShapeNames = { "Блок", "Шар", "Цилиндр" }
+local function runToolAction(spec)
+	local root = getRoot()
+	if not root then return end
+	if spec.Action == "Скрипт" then
+		runScript(spec.Script or "", false)
+	else
+		local f = Actions[spec.Action]
+		if f then f(root, spec) end
+	end
+end
 
 local function buildTool(spec)
 	local tool = create("Tool", {
@@ -1114,18 +2294,25 @@ local function buildTool(spec)
 		CanBeDropped = false,
 	}, nil)
 	tool:SetAttribute("LizaId", spec.Id)
-	local h = create("Part", {
-		Name = "Handle",
-		Size = Vector3.new(spec.X, spec.Y, spec.Z),
-		Color = spec.Color,
-		Material = Enum.Material.SmoothPlastic,
-	}, tool)
-	if spec.Shape == "Шар" then h.Shape = Enum.PartType.Ball
-	elseif spec.Shape == "Цилиндр" then h.Shape = Enum.PartType.Cylinder end
-	tool.Activated:Connect(function()
-		local root = getRoot()
-		if root then Actions[spec.Action](root) end
-	end)
+	local handle
+	for i, pd in ipairs(spec.Parts) do
+		local part = makePartInst(pd)
+		if i == 1 then
+			part.Name = "Handle"
+			part.Parent = tool
+			handle = part
+		else
+			part.Name = "Part" .. i
+			part.Massless = true
+			part.CFrame = handle.CFrame * CFrame.new(pd.Offset) * rotCF(pd.Rot)
+			part.Parent = tool
+			local w = Instance.new("WeldConstraint")
+			w.Part0 = handle
+			w.Part1 = part
+			w.Parent = handle
+		end
+	end
+	tool.Activated:Connect(function() runToolAction(spec) end)
 	return tool
 end
 
@@ -1152,6 +2339,36 @@ track(player.CharacterAdded:Connect(function()
 	task.wait(0.6)
 	for _, spec in ipairs(Created) do giveTool(spec) end
 end))
+
+-- черновик тула (то, что сейчас редактируется)
+local DefaultScript = [==[-- Скрипт тула (ЭКСПЕРИМЕНТАЛЬНО)
+-- Выполняется при каждом клике по тулу.
+-- Нажми "?" чтобы увидеть список команд.
+
+dash(100)
+print("Привет из тула!")
+]==]
+
+local Draft = {
+	Name = "МойТул",
+	Action = "Нет",
+	Script = DefaultScript,
+	Ver = 0,
+	EditId = nil,
+	Damage = 20,
+	BulletSpeed = 150,
+	Parts = { pdata("Блок", RGB(255, 140, 26), Vector3.new(1, 1, 3)) },
+}
+local function touchDraft() Draft.Ver += 1 end
+local function applyPreset(pr)
+	Draft.Name = pr.name
+	Draft.Parts = copyParts(pr.parts)
+	Draft.Action = pr.action
+	Draft.Damage = pr.damage or 20
+	Draft.BulletSpeed = pr.speed or 150
+	if pr.script then Draft.Script = pr.script end
+	touchDraft()
+end
 
 ---------------------------------------------------------------------
 -- VIP: логика (радуга / монохром / кастом)
@@ -1397,17 +2614,64 @@ end
 ---------------------------------------------------------------------
 -- ПОПАПЫ: VIP (меню) и КАСТОМ (редактор переливания)
 ---------------------------------------------------------------------
+-- разметка попапа: слева квадрат-превью, справа настройки
+local function splitLayout(p, leftW, stickyH)
+	stickyH = stickyH or 0
+	local left = create("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(10, 42),
+		Size = UDim2.new(0, leftW, 1, -52),
+	}, p)
+	local rx = leftW + 20
+	local sticky
+	local off = 0
+	if stickyH > 0 then
+		sticky = create("Frame", {
+			BackgroundTransparency = 1,
+			Position = UDim2.fromOffset(rx, 40),
+			Size = UDim2.new(1, -(rx + 8), 0, stickyH),
+		}, p)
+		off = stickyH + 6
+	end
+	local sc = create("ScrollingFrame", {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(rx, 40 + off),
+		Size = UDim2.new(1, -(rx + 8), 1, -(48 + off)),
+		ScrollBarThickness = 4,
+		CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+	}, p)
+	create("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, sc)
+	create("UIPadding", { PaddingRight = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6) }, sc)
+	return left, sc, sticky
+end
+
 local openVipCustom
 openVipCustom = function()
-	local p = showPopup(340, 288, "Кастом")
-	local sc = popupList(p)
+	local p = showPopup(450, 288, "Кастом")
+	local left, sc = splitLayout(p, 160, 0)
 
-	local pv = create("Frame", { Size = UDim2.new(1, 0, 0, 22), BorderSizePixel = 0, BackgroundColor3 = WHITE }, sc)
+	-- квадрат-превью: так будут переливаться кнопки и вкладки
+	local pv = create("Frame", { Size = UDim2.fromOffset(160, 160), BorderSizePixel = 0, BackgroundColor3 = WHITE }, left)
 	corner(pv)
 	Vip.preview = create("UIGradient", {}, pv)
+	local cap = create("TextLabel", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(0, 166),
+		Size = UDim2.new(1, 0, 0, 44),
+		Text = "Так будут переливаться вкладки и кнопки",
+		TextWrapped = true,
+		TextSize = 14,
+		TextTransparency = 0.2,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+	}, left)
+	bind(cap, "TextColor3", "Text")
+	bind(cap, "Font", "Font")
 
 	slider(sc, "Скорость переливания", 0, 3, Vip.speed, 0.05, 20, function(v) Vip.speed = v end)
-	note(sc, "Таймлайн 0.0 – 1.0: где на кнопке стоит каждый цвет. Скорость 0 — все цвета просто помещаются в кнопку.")
+	note(sc, "Таймлайн 0.0–1.0 — где на кнопке стоит цвет. Скорость 0: все цвета помещаются в кнопку.")
 
 	local holder = create("Frame", {
 		BackgroundTransparency = 1,
@@ -1427,8 +2691,8 @@ openVipCustom = function()
 
 			local lbl = create("TextLabel", {
 				BackgroundTransparency = 1,
-				Position = UDim2.fromOffset(10, 0),
-				Size = UDim2.fromOffset(60, 38),
+				Position = UDim2.fromOffset(8, 0),
+				Size = UDim2.fromOffset(50, 38),
 				Text = "Цвет " .. i,
 				TextSize = 15,
 				TextXAlignment = Enum.TextXAlignment.Left,
@@ -1437,8 +2701,8 @@ openVipCustom = function()
 			bind(lbl, "Font", "Font")
 
 			local tbox = create("TextBox", {
-				Position = UDim2.fromOffset(74, 6),
-				Size = UDim2.fromOffset(60, 26),
+				Position = UDim2.fromOffset(60, 6),
+				Size = UDim2.fromOffset(52, 26),
 				Text = string.format("%.2f", st.t),
 				TextSize = 14,
 				ClearTextOnFocus = false,
@@ -1455,8 +2719,8 @@ openVipCustom = function()
 			end)
 
 			local sw = create("TextButton", {
-				Position = UDim2.fromOffset(142, 6),
-				Size = UDim2.new(1, -142 - 44, 0, 26),
+				Position = UDim2.fromOffset(118, 6),
+				Size = UDim2.new(1, -118 - 40, 0, 26),
 				Text = "",
 				BorderSizePixel = 0,
 				AutoButtonColor = false,
@@ -1470,7 +2734,7 @@ openVipCustom = function()
 
 			local del = create("TextButton", {
 				AnchorPoint = Vector2.new(1, 0.5),
-				Position = UDim2.new(1, -8, 0.5, 0),
+				Position = UDim2.new(1, -6, 0.5, 0),
 				Size = UDim2.fromOffset(28, 26),
 				Text = "✕",
 				TextSize = 14,
@@ -1497,7 +2761,10 @@ openVipCustom = function()
 		local bestGap, bestT = -1, 0.5
 		for i = 1, #pts - 1 do
 			local g = pts[i + 1] - pts[i]
-			if g > bestGap then bestGap = g bestT = (pts[i] + pts[i + 1]) / 2 end
+			if g > bestGap then
+				bestGap = g
+				bestT = (pts[i] + pts[i + 1]) / 2
+			end
 		end
 		table.insert(Vip.stops, { t = math.floor(bestT * 100 + 0.5) / 100, c = Color3.fromHSV(math.random(), 0.9, 1) })
 		rebuild()
@@ -1680,34 +2947,148 @@ local function openConstructor()
 end
 
 ---------------------------------------------------------------------
--- ПОПАП: РЕДАКТОР АНИМАЦИЙ
+-- 3D-ПРЕВЬЮ (ViewportFrame): модель летает и вращается, можно крутить пальцем
+---------------------------------------------------------------------
+local previews = {}
+local function makePreview3D(parent, size, getParts, getVer, bgKey)
+	local holder = create("Frame", { Size = UDim2.fromOffset(size, size), BackgroundTransparency = 1 }, parent)
+	local vp = create("ViewportFrame", {
+		Size = UDim2.fromScale(1, 1),
+		BorderSizePixel = 0,
+		Ambient = Color3.fromRGB(170, 170, 170),
+		LightColor = WHITE,
+		LightDirection = Vector3.new(-1, -1.5, -1),
+	}, holder)
+	bind(vp, "BackgroundColor3", bgKey or "Panel")
+	corner(vp)
+	local cam = create("Camera", { FieldOfView = 40 }, vp)
+	vp.CurrentCamera = cam
+	local hit = create("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.fromScale(1, 1), ZIndex = 5 }, holder)
+
+	local obj = { frame = holder, items = {}, ver = -1, yaw = 0.7, pitch = 0.2, t = 0, dragging = false, radius = 3 }
+
+	function obj.rebuild()
+		for _, it in ipairs(obj.items) do it.part:Destroy() end
+		obj.items = {}
+		local r = 1
+		for i, pd in ipairs(getParts()) do
+			local part = makePartInst(pd)
+			part.Anchored = true
+			local rel = CFrame.identity
+			if i > 1 then rel = CFrame.new(pd.Offset) * rotCF(pd.Rot) end
+			part.Parent = vp
+			table.insert(obj.items, { part = part, rel = rel })
+			r = math.max(r, rel.Position.Magnitude + pd.Size.Magnitude / 2)
+		end
+		obj.radius = r
+		cam.CFrame = CFrame.lookAt(Vector3.new(0, r * 0.35, r * 2.6 + 1), Vector3.zero)
+	end
+
+	function obj.step(dt)
+		local v = getVer()
+		if v ~= obj.ver then
+			obj.ver = v
+			obj.rebuild()
+		end
+		obj.t += dt
+		if not obj.dragging then
+			obj.yaw += dt * 0.9
+			obj.pitch += (0.2 - obj.pitch) * math.min(1, dt * 2)
+		end
+		local bob = math.sin(obj.t * 2) * obj.radius * 0.08
+		local base = CFrame.new(0, bob, 0) * CFrame.Angles(obj.pitch, obj.yaw, 0)
+		for _, it in ipairs(obj.items) do it.part.CFrame = base * it.rel end
+	end
+
+	-- вращение пальцем / мышью
+	local last
+	local cs = {}
+	hit.InputBegan:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+			obj.dragging = true
+			last = i.Position
+		end
+	end)
+	table.insert(cs, UIS.InputChanged:Connect(function(i)
+		if obj.dragging and last and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+			local d = i.Position - last
+			last = i.Position
+			obj.yaw += d.X * 0.012
+			obj.pitch = math.clamp(obj.pitch + d.Y * 0.012, -1.3, 1.3)
+		end
+	end))
+	table.insert(cs, UIS.InputEnded:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+			obj.dragging = false
+		end
+	end))
+	holder.Destroying:Connect(function()
+		for _, c in ipairs(cs) do c:Disconnect() end
+	end)
+
+	obj.rebuild()
+	obj.ver = getVer()
+	table.insert(previews, obj)
+	return obj
+end
+
+track(RS.RenderStepped:Connect(function(dt)
+	for i = #previews, 1, -1 do
+		local o = previews[i]
+		if o.frame.Parent == nil then
+			table.remove(previews, i)
+		else
+			o.step(dt)
+		end
+	end
+end))
+
+local openToolEditor, openPartEditor, openScriptEditor
+local scriptGui
+
+---------------------------------------------------------------------
+-- ПОПАП: РЕДАКТОР АНИМАЦИЙ (слева превью, справа настройки)
 ---------------------------------------------------------------------
 local openAnimEditor
 openAnimEditor = function(id)
 	id = id or AnimOrder[1]
 	local a = Anim[id]
-	local p = showPopup(340, 288, "Редактор анимаций")
-	local sc = popupList(p)
+	local p = showPopup(450, 288, "Редактор анимаций")
+	local left, sc, sticky = splitLayout(p, 160, 36)
 
-	-- сцена превью
-	local stage = create("Frame", { Size = UDim2.new(1, 0, 0, 80), BorderSizePixel = 0, ClipsDescendants = true }, sc)
+	local stage = create("Frame", { Size = UDim2.fromOffset(160, 160), BorderSizePixel = 0, ClipsDescendants = true }, left)
 	bind(stage, "BackgroundColor3", "Panel")
 	corner(stage)
 	local demo = create("Frame", {
 		AnchorPoint = Vector2.new(0.5, 0.5),
 		Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.fromOffset(44, 44),
+		Size = UDim2.fromOffset(56, 56),
 		BorderSizePixel = 0,
 	}, stage)
 	bind(demo, "BackgroundColor3", "Accent")
-	create("UICorner", { CornerRadius = UDim.new(0, 10) }, demo)
+	create("UICorner", { CornerRadius = UDim.new(0, 12) }, demo)
 	local ds = create("UIScale", { Scale = 1 }, demo)
+
+	local cap = create("TextLabel", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(0, 166),
+		Size = UDim2.new(1, 0, 0, 44),
+		TextWrapped = true,
+		TextSize = 14,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+	}, left)
+	bind(cap, "TextColor3", "Text")
+	bind(cap, "Font", "Font")
+	local function refreshCap()
+		cap.Text = a.name .. "\n" .. a.style.Name .. " · " .. a.dir.Name .. " · " .. string.format("%.2f", a.time) .. " с"
+	end
+	refreshCap()
 
 	local function play()
 		if not demo.Parent then return end
-		local center = UDim2.fromScale(0.5, 0.5)
 		ds.Scale = 1
-		demo.Position = center
+		demo.Position = UDim2.fromScale(0.5, 0.5)
 		demo.BackgroundColor3 = accentBg()
 		local k = a.kind
 		if k == "scaleIn" then
@@ -1716,8 +3097,8 @@ openAnimEditor = function(id)
 		elseif k == "scaleOut" then
 			tw(ds, a.time, { Scale = 0.01 }, a.style, a.dir)
 		elseif k == "slide" then
-			demo.Position = UDim2.fromScale(0.12, 0.5)
-			tw(demo, a.time, { Position = UDim2.fromScale(0.88, 0.5) }, a.style, a.dir)
+			demo.Position = UDim2.fromScale(0.2, 0.5)
+			tw(demo, a.time, { Position = UDim2.fromScale(0.8, 0.5) }, a.style, a.dir)
 		elseif k == "knob" then
 			demo.Position = UDim2.fromScale(0.3, 0.5)
 			tw(demo, a.time, { Position = UDim2.fromScale(0.7, 0.5) }, a.style, a.dir)
@@ -1726,6 +3107,9 @@ openAnimEditor = function(id)
 			tw(demo, a.time, { BackgroundColor3 = Theme.Accent }, a.style, a.dir)
 		end
 	end
+
+	-- кнопка "Проиграть" — СВЕРХУ, всегда на виду (не прокручивается)
+	button(sticky, "▶  Проиграть", play)
 
 	local items = {}
 	for _, k in ipairs(AnimOrder) do
@@ -1748,12 +3132,15 @@ openAnimEditor = function(id)
 
 	cycle(sc, "Направление", { "In", "Out", "InOut" }, a.dir.Name, function(v)
 		a.dir = Enum.EasingDirection[v]
+		refreshCap()
 		play()
 	end)
 
-	slider(sc, "Длительность (сек)", 0.05, 2, a.time, 0.05, 5, function(v) a.time = v end)
+	slider(sc, "Длительность (сек)", 0.05, 2, a.time, 0.05, 5, function(v)
+		a.time = v
+		refreshCap()
+	end)
 
-	button(sc, "Превью  ▶", play)
 	button(sc, "Сбросить эту анимацию", function()
 		local d = AnimDefaults[id]
 		a.style, a.dir, a.time = d.style, d.dir, d.time
@@ -1764,8 +3151,746 @@ openAnimEditor = function(id)
 end
 
 ---------------------------------------------------------------------
+-- СКРИПТ-РЕДАКТОР НА ВЕСЬ ЭКРАН (ЭКСПЕРИМЕНТАЛЬНО)
+-- Отдельный ScreenGui: размер панели на него не влияет.
+---------------------------------------------------------------------
+local Examples = {
+	{ "Рывок вперёд", "-- Рывок вперёд\ndash(120)\n" },
+	{ "Телепорт к курсору", [==[-- Телепорт туда, куда нажал
+if mouse.Hit then
+  teleport(mouse.Position + Vector3.new(0, 3, 0))
+end
+]==] },
+	{ "Серия выстрелов", [==[-- 5 выстрелов подряд (последний аргумент — урон)
+for i = 1, 5 do
+  shoot(150, 1.2, Color3.fromRGB(255, 140, 26), 15)
+  wait(0.15)
+end
+]==] },
+	{ "Ускорение на 3 сек", [==[local old = humanoid.WalkSpeed
+humanoid.WalkSpeed = old * 2
+print("Ускорение!")
+wait(3)
+humanoid.WalkSpeed = old
+]==] },
+	{ "Неоновая волна", [==[-- Волна вокруг тебя + подброс вверх
+local ball = spawnPart(root.Position, Vector3.new(2, 2, 2), Color3.fromRGB(255, 140, 26), 1.5)
+ball.Shape = Enum.PartType.Ball
+ball.Material = Enum.Material.Neon
+tween(ball, {Size = Vector3.new(30, 30, 30), Transparency = 1}, 0.8)
+launch(Vector3.new(0, 70, 0))
+]==] },
+	{ "Функция и цикл", [==[-- Радужная дорожка из блоков
+function track(n)
+  for i = 1, n do
+    local pos = root.Position + root.CFrame.LookVector * i * 3
+    spawnPart(pos, Vector3.new(2, 0.4, 2), Color3.fromHSV(i / n, 1, 1), 3)
+    wait(0.05)
+  end
+end
+track(12)
+]==] },
+	{ "Подъём 2 секунды", [==[local t = 0
+while t < 2 do
+  launch(Vector3.new(0, 60, 0))
+  t = t + 0.1
+  wait(0.1)
+end
+]==] },
+	{ "Таблицы и цвета", [==[local colors = {Color3.fromRGB(255, 0, 0), Color3.fromRGB(0, 255, 0), Color3.fromRGB(0, 120, 255)}
+for i, c in ipairs(colors) do
+  shoot(140, 1.5, c, 25)
+  wait(0.2)
+end
+]==] },
+}
+
+local HelpLines = {
+	"ЭКСПЕРИМЕНТАЛЬНО: мини-язык, похож на Lua. Скрипт запускается при каждом клике по тулу.",
+	"Команды: speed(n) jump(n) dash(сила) launch(Vector3) teleport(Vector3)",
+	"shoot(скорость, размер, цвет, урон) — пуля, реально попадает и бьёт (урон локальный)",
+	"spawnPart(поз, размер, цвет, секунд)   tween(часть, {Свойство=значение}, сек)   destroy(часть)",
+	"wait(сек)  print(...)  notify(текст)",
+	"Объекты: character humanoid root camera mouse player workspace Enum Vector3 Color3 CFrame math",
+	"Язык: local, if/elseif/else, while, for, function, return, break, and/or/not, таблицы {}",
+}
+
+openScriptEditor = function(title, source, onSave)
+	if scriptGui then scriptGui:Destroy() scriptGui = nil end
+	local TextService = game:GetService("TextService")
+	local EDIT_TS = 16
+	scriptEditorOpen = true
+
+	local sg = create("ScreenGui", {
+		Name = "LizaHubC_Script",
+		ResetOnSpawn = false,
+		IgnoreGuiInset = true,
+		DisplayOrder = 500,
+		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+	}, playerGui)
+	scriptGui = sg
+
+	local root = create("Frame", {
+		Size = UDim2.fromScale(1, 1),
+		Position = UDim2.fromScale(0, 1),
+		BorderSizePixel = 0,
+		Active = true,
+	}, sg)
+	bind(root, "BackgroundColor3", "Bg")
+	create("UIPadding", {
+		PaddingTop = UDim.new(0, 12), PaddingLeft = UDim.new(0, 12),
+		PaddingRight = UDim.new(0, 12), PaddingBottom = UDim.new(0, 10),
+	}, root)
+	tw(root, 0.4, { Position = UDim2.fromScale(0, 0) }, Enum.EasingStyle.Quint)
+
+	-- ===== редактор кода =====
+	local sc = create("ScrollingFrame", {
+		Position = UDim2.fromOffset(0, 84),
+		Size = UDim2.new(1, 0, 1, -(84 + 112)),
+		BorderSizePixel = 0,
+		ScrollBarThickness = 6,
+		CanvasSize = UDim2.new(),
+		ScrollingDirection = Enum.ScrollingDirection.XY,
+	}, root)
+	bind(sc, "BackgroundColor3", "Panel")
+	corner(sc)
+
+	local lineH = TextService:GetTextSize("A", EDIT_TS, Enum.Font.Code, Vector2.new(10000, 10000)).Y
+	local errBar = create("Frame", {
+		BackgroundColor3 = Color3.fromRGB(255, 70, 70),
+		BackgroundTransparency = 0.75,
+		BorderSizePixel = 0,
+		Size = UDim2.fromOffset(2000, lineH),
+		Visible = false,
+	}, sc)
+
+	local nums = create("TextLabel", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(4, 6),
+		Size = UDim2.fromOffset(44, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		Font = Enum.Font.Code,
+		TextSize = EDIT_TS,
+		TextXAlignment = Enum.TextXAlignment.Right,
+		TextYAlignment = Enum.TextYAlignment.Top,
+		TextTransparency = 0.55,
+		Text = "1",
+	}, sc)
+	bind(nums, "TextColor3", "Text")
+
+	local box = create("TextBox", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(54, 6),
+		Size = UDim2.fromOffset(400, 300),
+		MultiLine = true,
+		ClearTextOnFocus = false,
+		TextWrapped = false,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+		Font = Enum.Font.Code,
+		TextSize = EDIT_TS,
+		PlaceholderText = "-- пиши скрипт тут",
+		Text = source or "",
+	}, sc)
+	bind(box, "TextColor3", "Text")
+
+	local function layout()
+		local vw, vh = sc.AbsoluteSize.X, sc.AbsoluteSize.Y
+		local bw = math.max(vw - 70, box.TextBounds.X + 40)
+		local bh = math.max(vh - 14, box.TextBounds.Y + 40)
+		box.Size = UDim2.fromOffset(bw, bh)
+		sc.CanvasSize = UDim2.fromOffset(bw + 60, bh + 14)
+	end
+	local function updateNums()
+		local n = select(2, box.Text:gsub("\n", "")) + 1
+		local t = {}
+		for i = 1, n do t[i] = tostring(i) end
+		nums.Text = table.concat(t, "\n")
+	end
+	box:GetPropertyChangedSignal("Text"):Connect(function()
+		updateNums()
+		layout()
+		errBar.Visible = false
+	end)
+	box:GetPropertyChangedSignal("TextBounds"):Connect(layout)
+	sc:GetPropertyChangedSignal("AbsoluteSize"):Connect(layout)
+	task.defer(function()
+		updateNums()
+		layout()
+	end)
+
+	-- запоминаем курсор (на телефоне при нажатии кнопок фокус пропадает)
+	local lastCursor
+	box:GetPropertyChangedSignal("CursorPosition"):Connect(function()
+		if box.CursorPosition >= 1 then lastCursor = box.CursorPosition end
+	end)
+	local function insert(str, at)
+		local txt = box.Text
+		local pos = math.clamp(lastCursor or (#txt + 1), 1, #txt + 1)
+		box.Text = txt:sub(1, pos - 1) .. str .. txt:sub(pos)
+		local newPos = pos + (at or #str)
+		lastCursor = newPos
+		box:CaptureFocus()
+		box.CursorPosition = newPos
+	end
+
+	-- ===== консоль =====
+	local con = create("Frame", {
+		Position = UDim2.new(0, 0, 1, -104),
+		Size = UDim2.new(1, 0, 0, 104),
+		BorderSizePixel = 0,
+	}, root)
+	bind(con, "BackgroundColor3", "Panel")
+	corner(con)
+	local ch = create("TextLabel", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(10, 2),
+		Size = UDim2.fromOffset(120, 20),
+		Text = "Консоль",
+		TextSize = 15,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, con)
+	bind(ch, "TextColor3", "Accent")
+	bind(ch, "Font", "Font")
+	local clr = create("TextButton", {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -8, 0, 3),
+		Size = UDim2.fromOffset(74, 20),
+		Text = "Очистить",
+		TextSize = 13,
+		BorderSizePixel = 0,
+		AutoButtonColor = false,
+	}, con)
+	bind(clr, "BackgroundColor3", "Bg")
+	bind(clr, "TextColor3", "Text")
+	bind(clr, "Font", "Font")
+	corner(clr)
+	local cs = create("ScrollingFrame", {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(8, 26),
+		Size = UDim2.new(1, -16, 1, -30),
+		ScrollBarThickness = 4,
+		CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+	}, con)
+	local clabel = create("TextLabel", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		RichText = true,
+		TextWrapped = true,
+		Font = Enum.Font.Code,
+		TextSize = 14,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+		Text = "",
+	}, cs)
+	bind(clabel, "TextColor3", "Text")
+
+	local function esc(s)
+		return (s:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"))
+	end
+	local function showErrLine(ln)
+		errBar.Position = UDim2.fromOffset(0, 6 + (ln - 1) * lineH)
+		errBar.Visible = true
+	end
+	consoleRefresh = function()
+		if not clabel.Parent then return end
+		local lines = {}
+		for _, m in ipairs(ConsoleLog) do
+			local colr
+			if m.kind == "error" then colr = "FF6B6B"
+			elseif m.kind == "warn" then colr = "FFB84D"
+			elseif m.kind == "info" then colr = "8FA0B3"
+			else colr = Theme.Text:ToHex() end
+			lines[#lines + 1] = '<font color="#' .. colr .. '">' .. esc(m.text) .. "</font>"
+		end
+		clabel.Text = table.concat(lines, "\n")
+		task.defer(function()
+			if cs.Parent then cs.CanvasPosition = Vector2.new(0, 1e6) end
+		end)
+		local last = ConsoleLog[#ConsoleLog]
+		if last and last.kind == "error" then
+			local ln = tonumber(last.text:match("строка (%d+)"))
+			if ln then showErrLine(ln) end
+		end
+	end
+	local clearArmed = false
+	clr.Activated:Connect(function()
+		ConsoleLog = {}
+		consoleRefresh()
+	end)
+	if #ConsoleLog == 0 then
+		for _, l in ipairs(HelpLines) do consoleAdd(l, "info") end
+	else
+		consoleRefresh()
+	end
+
+	-- ===== запуск / сохранение / закрытие =====
+	local currentRun
+	local function doRun()
+		if currentRun then currentRun.ctrl.stopFlag = true end
+		errBar.Visible = false
+		consoleAdd("▶ запуск…", "info")
+		currentRun = runScript(box.Text, true)
+	end
+	local closing = false
+	local function save()
+		if onSave then onSave(box.Text) end
+	end
+	local function close()
+		if closing then return end
+		closing = true
+		save()
+		scriptEditorOpen = false
+		consoleRefresh = nil
+		local t = tw(root, 0.3, { Position = UDim2.fromScale(0, 1) }, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+		t.Completed:Connect(function()
+			sg:Destroy()
+			if scriptGui == sg then scriptGui = nil end
+		end)
+	end
+
+	-- ===== верхняя панель =====
+	local top = create("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 38) }, root)
+	local ttl = create("TextLabel", {
+		BackgroundTransparency = 1,
+		Size = UDim2.fromOffset(200, 38),
+		Text = title,
+		TextSize = 17,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, top)
+	bind(ttl, "TextColor3", "Text")
+	bind(ttl, "Font", "Font")
+	local badge = create("Frame", {
+		Position = UDim2.fromOffset(206, 7),
+		Size = UDim2.fromOffset(142, 24),
+		BackgroundColor3 = Color3.fromRGB(230, 70, 70),
+		BorderSizePixel = 0,
+	}, top)
+	create("UICorner", { CornerRadius = UDim.new(0, 6) }, badge)
+	local bl = create("TextLabel", {
+		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(1, 1),
+		Text = "ЭКСПЕРИМЕНТАЛЬНО",
+		TextSize = 13,
+		TextColor3 = WHITE,
+	}, badge)
+	bind(bl, "Font", "Font")
+	TweenService:Create(badge, TweenInfo.new(0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { BackgroundTransparency = 0.4 }):Play()
+
+	local right = create("Frame", {
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, 0, 0, 0),
+		Size = UDim2.new(0, 0, 1, 0),
+		AutomaticSize = Enum.AutomaticSize.X,
+	}, top)
+	create("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		Padding = UDim.new(0, 6),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+		VerticalAlignment = Enum.VerticalAlignment.Center,
+	}, right)
+
+	local exF -- выпадающий список примеров
+	local function tbtn(text, w, cb, kind)
+		local b = create("TextButton", {
+			Size = UDim2.fromOffset(w, 32),
+			Text = text,
+			TextSize = 15,
+			TextColor3 = WHITE,
+			BorderSizePixel = 0,
+			AutoButtonColor = false,
+		}, right)
+		if kind == "red" then
+			b.BackgroundColor3 = Color3.fromRGB(200, 60, 70)
+		elseif kind == "panel" then
+			bind(b, "BackgroundColor3", "Panel")
+			bind(b, "TextColor3", "Text")
+		else
+			bind(b, "BackgroundColor3", "Accent")
+		end
+		bind(b, "Font", "Font")
+		corner(b)
+		fx(b)
+		b.Activated:Connect(cb)
+		return b
+	end
+	tbtn("▶ Запуск", 90, doRun)
+	tbtn("■ Стоп", 76, function()
+		stopAllScripts()
+		consoleAdd("■ остановлено", "info")
+	end, "red")
+	tbtn("Примеры", 86, function() exF.Visible = not exF.Visible end, "panel")
+	tbtn("?", 34, function()
+		for _, l in ipairs(HelpLines) do consoleAdd(l, "info") end
+	end, "panel")
+	tbtn("Сохранить", 92, function()
+		save()
+		consoleAdd("✔ скрипт сохранён в тул", "info")
+	end, "panel")
+	tbtn("✕", 36, close, "red")
+
+	-- ===== панель быстрых вставок (удобно на телефоне) =====
+	local bar = create("ScrollingFrame", {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(0, 44),
+		Size = UDim2.new(1, 0, 0, 34),
+		ScrollBarThickness = 0,
+		CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.X,
+		ScrollingDirection = Enum.ScrollingDirection.X,
+	}, root)
+	create("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		Padding = UDim.new(0, 6),
+		VerticalAlignment = Enum.VerticalAlignment.Center,
+	}, bar)
+	local function qbtn(label, str, at)
+		local b = create("TextButton", {
+			Size = UDim2.fromOffset(math.max(34, #label * 9 + 18), 28),
+			Text = label,
+			TextSize = 14,
+			BorderSizePixel = 0,
+			AutoButtonColor = false,
+			Font = Enum.Font.Code,
+		}, bar)
+		bind(b, "BackgroundColor3", "Panel")
+		bind(b, "TextColor3", "Text")
+		corner(b)
+		fx(b)
+		b.Activated:Connect(function() insert(str, at) end)
+	end
+	qbtn("Tab", "  ")
+	qbtn("( )", "()", 1)
+	qbtn('" "', '""', 1)
+	qbtn("{ }", "{}", 1)
+	qbtn("=", " = ")
+	qbtn(".", ".")
+	qbtn(":", ":")
+	qbtn(",", ", ")
+	qbtn("if", "if  then\n  \nend\n", 3)
+	qbtn("for", "for i = 1, 5 do\n  \nend\n", 18)
+	qbtn("while", "while true do\n  \n  wait(0.1)\nend\n", 16)
+	qbtn("function", "function name()\n  \nend\n", 9)
+	qbtn("end", "end\n")
+	qbtn("wait", "wait(1)\n", 5)
+	qbtn("print", "print()\n", 6)
+	qbtn("dash", "dash(100)\n", 5)
+	qbtn("shoot", "shoot(150, 1.5, Color3.fromRGB(255, 140, 26), 20)\n")
+	qbtn("teleport", "teleport(mouse.Position)\n")
+	qbtn("speed", "speed(50)\n", 6)
+	qbtn("jump", "jump(100)\n", 5)
+
+	-- ===== примеры =====
+	exF = create("Frame", {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, 0, 0, 44),
+		Size = UDim2.fromOffset(260, 230),
+		BorderSizePixel = 0,
+		Visible = false,
+		ZIndex = 10,
+	}, root)
+	bind(exF, "BackgroundColor3", "Panel")
+	corner(exF)
+	local exs = create("UIStroke", { Thickness = 1.5, Transparency = 0.3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, exF)
+	onTheme(exF, function() exs.Color = Theme.Accent end)
+	local exList = create("ScrollingFrame", {
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Position = UDim2.fromOffset(6, 6),
+		Size = UDim2.new(1, -12, 1, -12),
+		ScrollBarThickness = 4,
+		CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+	}, exF)
+	create("UIListLayout", { Padding = UDim.new(0, 4) }, exList)
+	local function exBtn(text, cb, red)
+		local b = create("TextButton", {
+			Size = UDim2.new(1, -6, 0, 32),
+			Text = text,
+			TextSize = 15,
+			BorderSizePixel = 0,
+			AutoButtonColor = false,
+		}, exList)
+		if red then
+			b.BackgroundColor3 = Color3.fromRGB(200, 60, 70)
+			b.TextColor3 = WHITE
+		else
+			bind(b, "BackgroundColor3", "Bg")
+			bind(b, "TextColor3", "Text")
+		end
+		bind(b, "Font", "Font")
+		corner(b)
+		fx(b)
+		b.Activated:Connect(cb)
+	end
+	for _, ex in ipairs(Examples) do
+		exBtn(ex[1], function()
+			if box.Text:gsub("%s", "") == "" then
+				box.Text = ex[2]
+			else
+				insert("\n" .. ex[2])
+			end
+			exF.Visible = false
+		end)
+	end
+	exBtn("Очистить код", function()
+		if not clearArmed then
+			clearArmed = true
+			consoleAdd("Нажми «Очистить код» ещё раз, чтобы стереть весь скрипт", "warn")
+			task.delay(3, function() clearArmed = false end)
+			return
+		end
+		clearArmed = false
+		box.Text = ""
+		exF.Visible = false
+	end, true)
+end
+
+---------------------------------------------------------------------
+-- РЕДАКТОР ПАРТА (слева 3D-превью, справа настройки)
+---------------------------------------------------------------------
+openPartEditor = function(idx)
+	local part = Draft.Parts[idx]
+	if not part then
+		openToolEditor()
+		return
+	end
+	local p = showPopup(450, 288, "Парт " .. idx .. (idx == 1 and " (рукоять)" or ""))
+	local left, sc, sticky = splitLayout(p, 160, 36)
+	makePreview3D(left, 160, function() return Draft.Parts end, function() return Draft.Ver end, "Panel")
+	local cap = create("TextLabel", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(0, 166),
+		Size = UDim2.new(1, 0, 0, 40),
+		Text = "Тяни, чтобы вращать модель",
+		TextWrapped = true,
+		TextSize = 14,
+		TextTransparency = 0.2,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+	}, left)
+	bind(cap, "TextColor3", "Text")
+	bind(cap, "Font", "Font")
+
+	button(sticky, "←  К тулу", function() openToolEditor() end)
+
+	cycle(sc, "Форма", ShapeNames, part.Shape, function(v) part.Shape = v touchDraft() end)
+	colorRow(sc, "Цвет", part.Color, function(sw)
+		pickColor("Цвет парта " .. idx, part.Color, function(c)
+			part.Color = c
+			sw.BackgroundColor3 = c
+			touchDraft()
+		end, function() openPartEditor(idx) end)
+	end)
+	cycle(sc, "Материал", MatNames, part.Material, function(v) part.Material = v touchDraft() end)
+	slider(sc, "Размер X", 0.1, 12, part.Size.X, 0.1, 60, function(v) part.Size = Vector3.new(v, part.Size.Y, part.Size.Z) touchDraft() end)
+	slider(sc, "Размер Y", 0.1, 12, part.Size.Y, 0.1, 60, function(v) part.Size = Vector3.new(part.Size.X, v, part.Size.Z) touchDraft() end)
+	slider(sc, "Размер Z", 0.1, 12, part.Size.Z, 0.1, 60, function(v) part.Size = Vector3.new(part.Size.X, part.Size.Y, v) touchDraft() end)
+	if idx > 1 then
+		slider(sc, "Сдвиг X", -10, 10, part.Offset.X, 0.1, 40, function(v) part.Offset = Vector3.new(v, part.Offset.Y, part.Offset.Z) touchDraft() end)
+		slider(sc, "Сдвиг Y", -10, 10, part.Offset.Y, 0.1, 40, function(v) part.Offset = Vector3.new(part.Offset.X, v, part.Offset.Z) touchDraft() end)
+		slider(sc, "Сдвиг Z", -10, 10, part.Offset.Z, 0.1, 40, function(v) part.Offset = Vector3.new(part.Offset.X, part.Offset.Y, v) touchDraft() end)
+		slider(sc, "Поворот X", -180, 180, part.Rot.X, 5, 360, function(v) part.Rot = Vector3.new(v, part.Rot.Y, part.Rot.Z) touchDraft() end)
+		slider(sc, "Поворот Y", -180, 180, part.Rot.Y, 5, 360, function(v) part.Rot = Vector3.new(part.Rot.X, v, part.Rot.Z) touchDraft() end)
+		slider(sc, "Поворот Z", -180, 180, part.Rot.Z, 5, 360, function(v) part.Rot = Vector3.new(part.Rot.X, part.Rot.Y, v) touchDraft() end)
+	else
+		note(sc, "Это основной парт (рукоять): он в центре. Остальные парты крепятся к нему.")
+	end
+	slider(sc, "Прозрачность", 0, 1, part.Transparency, 0.05, 1, function(v) part.Transparency = v touchDraft() end)
+
+	button(sc, "Дублировать парт", function()
+		local c = pdata(part.Shape, part.Color, part.Size, part.Offset + Vector3.new(0.5, 0.5, 0), part.Rot, part.Material, part.Transparency)
+		table.insert(Draft.Parts, c)
+		touchDraft()
+		openPartEditor(#Draft.Parts)
+	end)
+	if idx > 1 then
+		button(sc, "Удалить парт", function()
+			table.remove(Draft.Parts, idx)
+			touchDraft()
+			openToolEditor()
+		end, true)
+	end
+end
+
+---------------------------------------------------------------------
+-- РЕДАКТОР ТУЛА (слева 3D-превью, справа настройки)
+---------------------------------------------------------------------
+openToolEditor = function()
+	local p = showPopup(450, 288, "Редактор тула")
+	local left, sc = splitLayout(p, 160, 0)
+	makePreview3D(left, 160, function() return Draft.Parts end, function() return Draft.Ver end, "Panel")
+	local cap = create("TextLabel", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(0, 166),
+		Size = UDim2.new(1, 0, 0, 44),
+		Text = "Тяни, чтобы вращать.\nПартов: " .. #Draft.Parts,
+		TextWrapped = true,
+		TextSize = 14,
+		TextTransparency = 0.2,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+	}, left)
+	bind(cap, "TextColor3", "Text")
+	bind(cap, "Font", "Font")
+
+	input(sc, "Название", Draft.Name, function(t)
+		if t ~= "" then Draft.Name = t end
+	end)
+
+	button(sc, "Пресеты тулов", function()
+		local items = {}
+		for _, pr in ipairs(ToolPresets) do
+			local cols = {}
+			for i = 1, math.min(3, #pr.parts) do cols[i] = pr.parts[i].Color end
+			table.insert(items, { text = pr.name, pr = pr, colors = cols })
+		end
+		openList("Пресеты тулов", items, function(it)
+			applyPreset(it.pr)
+			openToolEditor()
+		end)
+	end)
+
+	local actionBtn
+	actionBtn = button(sc, "Действие: " .. Draft.Action, function()
+		local items = {}
+		for _, n in ipairs(ActionNames) do
+			table.insert(items, { text = n, name = n, selected = (n == Draft.Action) })
+		end
+		openList("Действие при клике", items, function(it)
+			Draft.Action = it.name
+			openToolEditor()
+		end)
+	end)
+
+	if Draft.Action == "Выстрел" then
+		slider(sc, "Урон пули (локальный)", 0, 500, Draft.Damage, 1, 100000, function(v) Draft.Damage = v end)
+		slider(sc, "Скорость пули", 20, 500, Draft.BulletSpeed, 5, 1000, function(v) Draft.BulletSpeed = v end)
+	end
+
+	-- карточка: скрипт лежит В ТУЛЕ
+	local card = create("Frame", { Size = UDim2.new(1, 0, 0, 104), BorderSizePixel = 0 }, sc)
+	bind(card, "BackgroundColor3", "Panel")
+	corner(card)
+	local l1 = create("TextLabel", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(10, 6),
+		Size = UDim2.new(1, -20, 0, 18),
+		Text = 'Tool "' .. Draft.Name .. '"',
+		Font = Enum.Font.Code,
+		TextSize = 14,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+	}, card)
+	bind(l1, "TextColor3", "Text")
+	local l2 = create("TextLabel", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(10, 24),
+		Size = UDim2.new(1, -20, 0, 18),
+		Text = "└─ Script  ›  Content",
+		Font = Enum.Font.Code,
+		TextSize = 14,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, card)
+	bind(l2, "TextColor3", "Accent")
+	local bd = create("Frame", {
+		Position = UDim2.fromOffset(10, 46),
+		Size = UDim2.fromOffset(140, 20),
+		BackgroundColor3 = Color3.fromRGB(230, 70, 70),
+		BorderSizePixel = 0,
+	}, card)
+	create("UICorner", { CornerRadius = UDim.new(0, 5) }, bd)
+	local bdl = create("TextLabel", {
+		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(1, 1),
+		Text = "ЭКСПЕРИМЕНТАЛЬНО",
+		TextSize = 12,
+		TextColor3 = WHITE,
+	}, bd)
+	bind(bdl, "Font", "Font")
+	local sb = button(card, "Открыть скрипт-редактор", function()
+		Draft.Action = "Скрипт"
+		actionBtn.Text = "Действие: Скрипт"
+		openScriptEditor('Tool "' .. Draft.Name .. '"  ›  Script.Content', Draft.Script, function(src)
+			Draft.Script = src
+			touchDraft()
+		end)
+	end)
+	sb.Position = UDim2.fromOffset(10, 72)
+	sb.Size = UDim2.new(1, -20, 0, 26)
+
+	-- парты
+	note(sc, "Парты — нажми, чтобы изменить:")
+	for i, pd in ipairs(Draft.Parts) do
+		local row = create("TextButton", {
+			Size = UDim2.new(1, 0, 0, 36),
+			Text = "",
+			AutoButtonColor = false,
+			BorderSizePixel = 0,
+			LayoutOrder = 0,
+		}, sc)
+		bind(row, "BackgroundColor3", "Panel")
+		corner(row)
+		fx(row)
+		local sw = create("Frame", {
+			Position = UDim2.fromOffset(10, 10),
+			Size = UDim2.fromOffset(16, 16),
+			BackgroundColor3 = pd.Color,
+			BorderSizePixel = 0,
+		}, row)
+		create("UICorner", { CornerRadius = UDim.new(0, 4) }, sw)
+		create("UIStroke", { Color = Color3.fromRGB(130, 130, 130), Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, sw)
+		local lbl = create("TextLabel", {
+			BackgroundTransparency = 1,
+			Position = UDim2.fromOffset(34, 0),
+			Size = UDim2.new(1, i > 1 and -76 or -44, 1, 0),
+			Text = i .. ". " .. pd.Shape .. " · " .. pd.Material,
+			TextSize = 15,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		}, row)
+		bind(lbl, "TextColor3", "Text")
+		bind(lbl, "Font", "Font")
+		row.Activated:Connect(function() openPartEditor(i) end)
+		if i > 1 then
+			local del = create("TextButton", {
+				AnchorPoint = Vector2.new(1, 0.5),
+				Position = UDim2.new(1, -6, 0.5, 0),
+				Size = UDim2.fromOffset(28, 26),
+				Text = "✕",
+				TextSize = 14,
+				TextColor3 = WHITE,
+				BorderSizePixel = 0,
+				BackgroundColor3 = Color3.fromRGB(200, 60, 70),
+			}, row)
+			create("UICorner", { CornerRadius = UDim.new(0, 6) }, del)
+			del.Activated:Connect(function()
+				table.remove(Draft.Parts, i)
+				touchDraft()
+				openToolEditor()
+			end)
+		end
+	end
+	button(sc, "+  Добавить парт", function()
+		local n = #Draft.Parts
+		table.insert(Draft.Parts, pdata("Блок", RGB(math.random(80, 255), math.random(80, 255), math.random(80, 255)), Vector3.new(0.8, 0.8, 0.8), Vector3.new(0, 0, -n * 0.9)))
+		touchDraft()
+		openPartEditor(#Draft.Parts)
+	end)
+	button(sc, "Готово", function() closePopup() end)
+end
+
+---------------------------------------------------------------------
 -- SKILLS (смешные кнопки с кастомизацией)
 ---------------------------------------------------------------------
+local Skills = {}
+do
 local function C(r, g, b) return Color3.fromRGB(r, g, b) end
 local function col(key, label, default) return { key = key, label = label, type = "color", default = default } end
 local function num(key, label, min, max, default, step, hardMax)
@@ -1993,7 +4118,6 @@ local SkillDefs = {
 }
 
 -- конфиги и состояния скиллов
-local Skills = {}
 for _, def in ipairs(SkillDefs) do
 	def.cfg, def.defaults = {}, {}
 	for _, pr in ipairs(def.params) do
@@ -2001,6 +4125,7 @@ for _, def in ipairs(SkillDefs) do
 		def.defaults[pr.key] = pr.default
 	end
 	table.insert(Skills, def)
+end
 end
 
 local function setSkill(skill, on)
@@ -2074,6 +4199,8 @@ end
 local pMove = addTab("Движение")
 slider(pMove, "Скорость ходьбы", 0, 200, 16, 1, 1000, function(v) State.Walk = v State.WalkOn = true end)
 slider(pMove, "Высота прыжка", 0, 300, 50, 1, 1000, function(v) State.Jump = v State.JumpOn = true end)
+toggle(pMove, "Ноуклип (сквозь стены)", false, function(on) setNoclip(on) end)
+toggle(pMove, "Бесконечный прыжок", false, function(on) setInfJump(on) end)
 button(pMove, "Сбросить по умолчанию", function()
 	State.WalkOn, State.JumpOn = false, false
 	local hum = getHum()
@@ -2095,24 +4222,112 @@ note(pFly, "Летишь туда, куда смотрит камера: смо�
 
 -- ТУЛЫ
 local pTool = addTab("Тулы")
-local Draft = { Name = "МойТул", Shape = "Блок", Color = Color3.fromRGB(255, 140, 26), X = 1, Y = 1, Z = 3, Action = "Нет" }
+local listFrame, rebuildList
 
-input(pTool, "Название", Draft.Name, function(t) if t ~= "" then Draft.Name = t end end)
-cycle(pTool, "Форма", ShapeNames, Draft.Shape, function(v) Draft.Shape = v end)
-colorRow(pTool, "Цвет", Draft.Color, function(sw)
-	pickColor("Цвет тула", Draft.Color, function(c)
-		Draft.Color = c
-		sw.BackgroundColor3 = c
-	end, function() closePopup() end)
+-- карточка: слева 3D-превью (квадрат), справа название и кнопки
+local card = create("Frame", { Size = UDim2.new(1, 0, 0, 166), BorderSizePixel = 0 }, pTool)
+bind(card, "BackgroundColor3", "Panel")
+corner(card)
+local pagePrev = makePreview3D(card, 136, function() return Draft.Parts end, function() return Draft.Ver end, "Bg")
+pagePrev.frame.Position = UDim2.fromOffset(10, 10)
+local hint = create("TextLabel", {
+	BackgroundTransparency = 1,
+	Position = UDim2.fromOffset(10, 148),
+	Size = UDim2.fromOffset(136, 14),
+	Text = "Тяни, чтобы вращать",
+	TextSize = 12,
+	TextTransparency = 0.3,
+}, card)
+bind(hint, "TextColor3", "Text")
+bind(hint, "Font", "Font")
+
+local nameBox = create("TextBox", {
+	Position = UDim2.fromOffset(156, 10),
+	Size = UDim2.new(1, -166, 0, 30),
+	Text = Draft.Name,
+	PlaceholderText = "Название тула",
+	TextSize = 16,
+	ClearTextOnFocus = false,
+	BorderSizePixel = 0,
+}, card)
+bind(nameBox, "BackgroundColor3", "Bg")
+bind(nameBox, "TextColor3", "Text")
+bind(nameBox, "Font", "Font")
+corner(nameBox)
+nameBox.FocusLost:Connect(function()
+	if nameBox.Text ~= "" then Draft.Name = nameBox.Text end
 end)
-slider(pTool, "Размер X", 0.2, 10, 1, 0.1, 50, function(v) Draft.X = v end)
-slider(pTool, "Размер Y", 0.2, 10, 1, 0.1, 50, function(v) Draft.Y = v end)
-slider(pTool, "Размер Z", 0.2, 10, 3, 0.1, 50, function(v) Draft.Z = v end)
-cycle(pTool, "Действие (клик)", ActionNames, Draft.Action, function(v) Draft.Action = v end)
-toggle(pTool, "Выдавать после респавна", true, function(v) AutoGive = v end)
 
-local listFrame
-local function rebuildList()
+local editBtn = button(card, "Редактор тула", function() openToolEditor() end)
+editBtn.Position = UDim2.fromOffset(156, 46)
+editBtn.Size = UDim2.new(1, -166, 0, 30)
+
+local presetBtn = button(card, "Пресеты", function()
+	local items = {}
+	for _, pr in ipairs(ToolPresets) do
+		local cols = {}
+		for i = 1, math.min(3, #pr.parts) do cols[i] = pr.parts[i].Color end
+		table.insert(items, { text = pr.name, pr = pr, colors = cols })
+	end
+	openList("Пресеты тулов", items, function(it)
+		applyPreset(it.pr)
+		closePopup()
+	end)
+end)
+presetBtn.Position = UDim2.fromOffset(156, 82)
+presetBtn.Size = UDim2.new(1, -166, 0, 30)
+
+local createBtn
+createBtn = button(card, "Создать тул", function()
+	if Draft.EditId then
+		for _, spec in ipairs(Created) do
+			if spec.Id == Draft.EditId then
+				spec.Name, spec.Action, spec.Script = Draft.Name, Draft.Action, Draft.Script
+				spec.Damage, spec.BulletSpeed = Draft.Damage, Draft.BulletSpeed
+				spec.Parts = copyParts(Draft.Parts)
+				giveTool(spec)
+				break
+			end
+		end
+		Draft.EditId = nil
+	else
+		nextId += 1
+		local spec = {
+			Id = nextId,
+			Name = Draft.Name,
+			Action = Draft.Action,
+			Script = Draft.Script,
+			Damage = Draft.Damage,
+			BulletSpeed = Draft.BulletSpeed,
+			Parts = copyParts(Draft.Parts),
+		}
+		table.insert(Created, spec)
+		giveTool(spec)
+	end
+	rebuildList()
+end)
+createBtn.Position = UDim2.fromOffset(156, 118)
+createBtn.Size = UDim2.new(1, -166, 0, 30)
+
+-- синхронизация названия и текста кнопки с черновиком
+track(RS.Heartbeat:Connect(function()
+	if not nameBox.Parent then return end
+	if not nameBox:IsFocused() and nameBox.Text ~= Draft.Name then nameBox.Text = Draft.Name end
+	local want = Draft.EditId and "Сохранить тул" or "Создать тул"
+	if createBtn.Text ~= want then createBtn.Text = want end
+end))
+
+toggle(pTool, "Выдавать после респавна", true, function(v) AutoGive = v end)
+note(pTool, "Твои тулы:")
+listFrame = create("Frame", {
+	BackgroundTransparency = 1,
+	Size = UDim2.new(1, 0, 0, 0),
+	AutomaticSize = Enum.AutomaticSize.Y,
+}, pTool)
+create("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, listFrame)
+note(pTool, "Тулы локальные: видишь и пользуешься ими только ты. «Выстрел» реально попадает и бьёт (урон тоже локальный).")
+
+rebuildList = function()
 	for _, c in ipairs(listFrame:GetChildren()) do
 		if c:IsA("Frame") then c:Destroy() end
 	end
@@ -2123,7 +4338,7 @@ local function rebuildList()
 		local l = create("TextLabel", {
 			BackgroundTransparency = 1,
 			Position = UDim2.fromOffset(8, 0),
-			Size = UDim2.new(1, -110, 1, 0),
+			Size = UDim2.new(1, -150, 1, 0),
 			Text = spec.Name .. "  (" .. spec.Action .. ")",
 			TextSize = 15,
 			TextXAlignment = Enum.TextXAlignment.Left,
@@ -2131,60 +4346,40 @@ local function rebuildList()
 		}, row)
 		bind(l, "TextColor3", "Text")
 		bind(l, "Font", "Font")
-		local give = create("TextButton", {
-			Position = UDim2.new(1, -100, 0, 4),
-			Size = UDim2.fromOffset(62, 26),
-			Text = "Дать",
-			TextSize = 14,
-			TextColor3 = WHITE,
-			BorderSizePixel = 0,
-			AutoButtonColor = false,
-		}, row)
-		bind(give, "BackgroundColor3", "Accent")
-		bind(give, "Font", "Font")
-		corner(give)
-		fx(give)
-		give.Activated:Connect(function() giveTool(spec) end)
-		local del = create("TextButton", {
-			Position = UDim2.new(1, -34, 0, 4),
-			Size = UDim2.fromOffset(28, 26),
-			Text = "✕",
-			TextSize = 14,
-			TextColor3 = WHITE,
-			BorderSizePixel = 0,
-			BackgroundColor3 = Color3.fromRGB(200, 60, 70),
-		}, row)
-		corner(del)
-		del.Activated:Connect(function()
+
+		local function small(text, x, w, red, cb)
+			local b = create("TextButton", {
+				Position = UDim2.new(1, x, 0, 4),
+				Size = UDim2.fromOffset(w, 26),
+				Text = text,
+				TextSize = 14,
+				TextColor3 = WHITE,
+				BorderSizePixel = 0,
+				AutoButtonColor = false,
+			}, row)
+			if red then b.BackgroundColor3 = Color3.fromRGB(200, 60, 70) else bind(b, "BackgroundColor3", "Accent") end
+			bind(b, "Font", "Font")
+			corner(b)
+			fx(b)
+			b.Activated:Connect(cb)
+		end
+		small("Дать", -140, 44, false, function() giveTool(spec) end)
+		small("Ред.", -92, 44, false, function()
+			Draft.Name, Draft.Action, Draft.Script = spec.Name, spec.Action, spec.Script
+			Draft.Damage, Draft.BulletSpeed = spec.Damage or 20, spec.BulletSpeed or 150
+			Draft.Parts = copyParts(spec.Parts)
+			Draft.EditId = spec.Id
+			touchDraft()
+			toast("Тул загружен в редактор")
+		end)
+		small("✕", -42, 34, true, function()
 			removeToolById(spec.Id)
+			if Draft.EditId == spec.Id then Draft.EditId = nil end
 			table.remove(Created, table.find(Created, spec))
 			rebuildList()
 		end)
 	end
 end
-
-button(pTool, "Создать тул", function()
-	nextId += 1
-	local spec = {
-		Id = nextId,
-		Name = Draft.Name,
-		Shape = Draft.Shape,
-		Color = Draft.Color,
-		X = Draft.X, Y = Draft.Y, Z = Draft.Z,
-		Action = Draft.Action,
-	}
-	table.insert(Created, spec)
-	giveTool(spec)
-	rebuildList()
-end)
-note(pTool, "Твои тулы:")
-listFrame = create("Frame", {
-	BackgroundTransparency = 1,
-	Size = UDim2.new(1, 0, 0, 0),
-	AutomaticSize = Enum.AutomaticSize.Y,
-}, pTool)
-create("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, listFrame)
-note(pTool, "Тулы локальные: видишь и пользуешься ими только ты.")
 
 -- SKILLS
 local pSkills = addTab("Skills")
@@ -2286,6 +4481,10 @@ end, true)
 button(pDesign, "Выгрузить панель", function()
 	stopFly()
 	stopAllSkills()
+	stopAllScripts()
+	setNoclip(false)
+	setInfJump(false)
+	if scriptGui then scriptGui:Destroy() end
 	State.WalkOn, State.JumpOn = false, false
 	for _, c in ipairs(conns) do c:Disconnect() end
 	gui:Destroy()
