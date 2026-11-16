@@ -1,5 +1,5 @@
 --[[
-    LizaHubC v4 — один LocalScript, без серверных скриптов
+    LizaHubC v5 — один LocalScript, без серверных скриптов
     Положи в StarterPlayer > StarterPlayerScripts
 
     Вкладки: Движение | Полёт | Тулы | Skills | Дизайн
@@ -4489,6 +4489,596 @@ button(pDesign, "Выгрузить панель", function()
 	for _, c in ipairs(conns) do c:Disconnect() end
 	gui:Destroy()
 end, true)
+
+---------------------------------------------------------------------
+-- BUILDING + КРЕДИТЫ (мини-игра Claude)
+---------------------------------------------------------------------
+do
+	local MAXP = 500
+	local B = {
+		Mode = "Поставить", Shape = "Блок",
+		Mat = Enum.Material.SmoothPlastic, MatName = "Пластик",
+		Color = Color3.fromRGB(255, 140, 26), Size = Vector3.new(4, 1, 4),
+		Transparency = 0, Reflect = 0, Rot = 0,
+		Grid = true, GridSize = 1,
+		Anchored = true, Collide = true, Light = false, Ghost = true,
+		Ver = 0,
+	}
+	local function touch() B.Ver += 1 end
+
+	local Mats = {}
+	for _, m in ipairs({
+		{ "Пластик", "SmoothPlastic" }, { "Пластик (зерно)", "Plastic" }, { "Дерево", "Wood" },
+		{ "Доски", "WoodPlanks" }, { "Кирпич", "Brick" }, { "Бетон", "Concrete" },
+		{ "Камень", "Slate" }, { "Булыжник", "Cobblestone" }, { "Гранит", "Granite" },
+		{ "Мрамор", "Marble" }, { "Металл", "Metal" }, { "Ржавчина", "CorrodedMetal" },
+		{ "Рифлёный металл", "DiamondPlate" }, { "Фольга", "Foil" }, { "Стекло", "Glass" },
+		{ "Лёд", "Ice" }, { "Неон", "Neon" }, { "Трава", "Grass" },
+		{ "Песок", "Sand" }, { "Ткань", "Fabric" }, { "Снег", "Snow" },
+	}) do
+		local ok, e = pcall(function() return Enum.Material[m[2]] end)
+		if ok and e then table.insert(Mats, { m[1], e }) end
+	end
+	local function matNameOf(e)
+		for _, m in ipairs(Mats) do
+			if m[2] == e then return m[1] end
+		end
+		return e.Name
+	end
+
+	local folder = create("Folder", { Name = "LizaBuild" }, workspace)
+	local History, tool, ghost, ghostVer = {}, nil, nil, -1
+	local given = false
+	local colorSw, matBtn, setSizeBox, setTr, setRf, setRot, countL, giveBtn, ctrl
+	local giveHammer
+
+	local function curSize()
+		local s = B.Size
+		if B.Shape == "Шар" then
+			local m = math.max(s.X, s.Y, s.Z)
+			return Vector3.new(m, m, m)
+		end
+		return s
+	end
+	local function fmtSize(s) return string.format("%g %g %g", s.X, s.Y, s.Z) end
+	local function updCount()
+		if countL then countL.Text = "Построено: " .. #folder:GetChildren() .. " / " .. MAXP end
+	end
+	local function push(h)
+		table.insert(History, h)
+		if #History > 60 then table.remove(History, 1) end
+	end
+	local function sync()
+		if colorSw then colorSw.BackgroundColor3 = B.Color end
+		if matBtn then matBtn.Text = "Материал: " .. B.MatName end
+		if setSizeBox then setSizeBox(fmtSize(B.Size)) end
+		if setTr then setTr(B.Transparency) end
+		if setRf then setRf(B.Reflect) end
+		if setRot then setRot(B.Rot) end
+		touch()
+	end
+
+	-- ===== луч, позиция, сетка =====
+	local function castMouse()
+		local cam = workspace.CurrentCamera
+		local ray = cam:ScreenPointToRay(mouse.X, mouse.Y)
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		local ex = {}
+		if player.Character then table.insert(ex, player.Character) end
+		if ghost then table.insert(ex, ghost) end
+		params.FilterDescendantsInstances = ex
+		return workspace:Raycast(ray.Origin, ray.Direction * 500, params)
+	end
+	local function halfExt(cf, s)
+		local r, u, l = cf.RightVector, cf.UpVector, cf.LookVector
+		return Vector3.new(
+			math.abs(r.X) * s.X + math.abs(u.X) * s.Y + math.abs(l.X) * s.Z,
+			math.abs(r.Y) * s.X + math.abs(u.Y) * s.Y + math.abs(l.Y) * s.Z,
+			math.abs(r.Z) * s.X + math.abs(u.Z) * s.Y + math.abs(l.Z) * s.Z
+		) / 2
+	end
+	local function snap(v, g) return math.floor(v / g + 0.5) * g end
+	local function targetCF(res)
+		local rot = CFrame.Angles(0, math.rad(B.Rot), 0)
+		local half = halfExt(rot, curSize())
+		local n = res.Normal
+		local off = math.abs(n.X) * half.X + math.abs(n.Y) * half.Y + math.abs(n.Z) * half.Z
+		local pos = res.Position + n * off
+		if B.Grid then
+			local g = math.max(B.GridSize, 0.05)
+			pos = Vector3.new(snap(pos.X, g), snap(pos.Y, g), snap(pos.Z, g))
+		end
+		return CFrame.new(pos) * rot
+	end
+
+	-- ===== действия молотка =====
+	local function place(res)
+		if #folder:GetChildren() >= MAXP then
+			toast("Лимит " .. MAXP .. " партов", true)
+			return
+		end
+		local part = makePartInst(pdata(B.Shape, B.Color, curSize(), nil, nil, "Пластик", B.Transparency))
+		part.Name = "Block"
+		part.Material = B.Mat
+		part.Reflectance = B.Reflect
+		part.Anchored = B.Anchored
+		part.CanCollide = B.Collide
+		part.CastShadow = true
+		part.CFrame = targetCF(res)
+		if B.Light then
+			create("PointLight", { Color = B.Color, Brightness = 2, Range = 16, Shadows = false }, part)
+		end
+		part.Parent = folder
+		push({ t = "place", part = part })
+		updCount()
+	end
+
+	local function onClick()
+		local res = castMouse()
+		if not res then return end
+		if B.Mode == "Поставить" then
+			place(res)
+			return
+		end
+		local part = res.Instance
+		if not part:IsDescendantOf(folder) then
+			toast("Это не твой блок", true)
+			return
+		end
+		if B.Mode == "Удалить" then
+			push({ t = "delete", clone = part:Clone() })
+			part:Destroy()
+			updCount()
+		elseif B.Mode == "Покрасить" then
+			push({ t = "paint", part = part, c = part.Color, m = part.Material, tr = part.Transparency, rf = part.Reflectance })
+			part.Color = B.Color
+			part.Material = B.Mat
+			part.Transparency = B.Transparency
+			part.Reflectance = B.Reflect
+			local l = part:FindFirstChildOfClass("PointLight")
+			if l then l.Color = B.Color end
+		elseif B.Mode == "Пипетка" then
+			B.Color, B.Mat, B.MatName = part.Color, part.Material, matNameOf(part.Material)
+			B.Transparency, B.Reflect, B.Size = part.Transparency, part.Reflectance, part.Size
+			sync()
+			toast("Свойства скопированы")
+		end
+	end
+
+	local function undo()
+		local h = table.remove(History)
+		if not h then toast("Нечего отменять") return end
+		if h.t == "place" then
+			if h.part.Parent then h.part:Destroy() end
+		elseif h.t == "delete" then
+			h.clone.Parent = folder
+		elseif h.t == "paint" and h.part.Parent then
+			h.part.Color, h.part.Material = h.c, h.m
+			h.part.Transparency, h.part.Reflectance = h.tr, h.rf
+		end
+		updCount()
+	end
+
+	local function rotate90()
+		B.Rot = (B.Rot + 90) % 360
+		if setRot then setRot(B.Rot) end
+		touch()
+	end
+
+	-- ===== молоток =====
+	local function V(x, y, z) return Vector3.new(x, y, z) end
+	local HAMMER = {
+		Id = "LizaHammer", Name = "Молоток", Action = "Нет",
+		Parts = {
+			pdata("Блок", RGB(110, 70, 40), V(0.4, 0.4, 2.6), nil, nil, "Дерево"),
+			pdata("Блок", RGB(140, 140, 150), V(1.7, 1.1, 1.1), V(0, 0, -1.5), nil, "Металл"),
+			pdata("Блок", RGB(255, 140, 26), V(0.25, 1.2, 1.2), V(0.95, 0, -1.5), nil, "Неон"),
+			pdata("Блок", RGB(255, 140, 26), V(0.25, 1.2, 1.2), V(-0.95, 0, -1.5), nil, "Неон"),
+		},
+	}
+	local function equipped() return tool and tool.Parent == player.Character end
+
+	giveHammer = function(silent)
+		local bp = player:FindFirstChildOfClass("Backpack")
+		if not bp then return end
+		removeToolById(HAMMER.Id)
+		tool = buildTool(HAMMER)
+		tool.Activated:Connect(onClick)
+		tool.Parent = bp
+		given = true
+		ctrl.Visible = true
+		giveBtn.Text = "Give — молоток ещё раз"
+		updCount()
+		if not silent then toast("Молоток в рюкзаке!") end
+	end
+
+	-- призрак-превью
+	local function rebuildGhost()
+		if ghost then ghost:Destroy() ghost = nil end
+		ghost = makePartInst(pdata(B.Shape, B.Color, curSize(), nil, nil, "Пластик", math.max(0.55, B.Transparency)))
+		ghost.Name = "LizaGhost"
+		ghost.Anchored, ghost.CanCollide, ghost.CanQuery, ghost.CanTouch, ghost.CastShadow = true, false, false, false, false
+		ghost.Material = B.Mat
+		ghostVer = B.Ver
+	end
+	track(RS.RenderStepped:Connect(function()
+		if not (equipped() and B.Ghost and B.Mode == "Поставить") then
+			if ghost and ghost.Parent then ghost.Parent = nil end
+			return
+		end
+		if not ghost or ghostVer ~= B.Ver then rebuildGhost() end
+		local res = castMouse()
+		if res then
+			ghost.CFrame = targetCF(res)
+			ghost.Parent = workspace
+		else
+			ghost.Parent = nil
+		end
+	end))
+
+	track(UIS.InputBegan:Connect(function(i, gp)
+		if gp or i.UserInputType ~= Enum.UserInputType.Keyboard or not equipped() then return end
+		if i.KeyCode == Enum.KeyCode.R then rotate90()
+		elseif i.KeyCode == Enum.KeyCode.Z then undo() end
+	end))
+
+	track(player.CharacterAdded:Connect(function()
+		if not given then return end
+		task.wait(0.7)
+		giveHammer(true)
+	end))
+
+	-- чистка при «Выгрузить панель»
+	table.insert(conns, { Disconnect = function()
+		if ghost then ghost:Destroy() end
+		removeToolById(HAMMER.Id)
+		folder:Destroy()
+	end })
+
+	-- ===== ВКЛАДКА BUILDING =====
+	local pBuild = addTab("Building")
+
+	giveBtn = button(pBuild, "Give — получить молоток", function() giveHammer(false) end)
+	giveBtn.LayoutOrder = 1
+	local hintL = note(pBuild, "Нажми Give, и появятся настройки стройки. Блоки видишь только ты.")
+	hintL.LayoutOrder = 2
+
+	ctrl = create("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		Visible = false,
+		LayoutOrder = 3,
+	}, pBuild)
+	create("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, ctrl)
+
+	countL = note(ctrl, "Построено: 0 / " .. MAXP)
+	note(ctrl, "Тап/клик молотком по поверхности. ПК: R — повернуть, Z — отменить.")
+
+	cycle(ctrl, "Режим", { "Поставить", "Удалить", "Покрасить", "Пипетка" }, B.Mode, function(v) B.Mode = v touch() end)
+
+	matBtn = button(ctrl, "Материал: " .. B.MatName, function()
+		local items = {}
+		for _, m in ipairs(Mats) do
+			table.insert(items, { text = m[1], mat = m[2], selected = (B.Mat == m[2]) })
+		end
+		openList("Материал", items, function(it)
+			B.Mat, B.MatName = it.mat, it.text
+			matBtn.Text = "Материал: " .. B.MatName
+			touch()
+			closePopup()
+		end)
+	end)
+
+	colorSw = colorRow(ctrl, "Цвет", B.Color, function(sw)
+		pickColor("Цвет блока", B.Color, function(c)
+			B.Color = c
+			sw.BackgroundColor3 = c
+			touch()
+		end)
+	end)
+
+	setSizeBox = input(ctrl, "Размер X Y Z", fmtSize(B.Size), function(t, box)
+		local nums = {}
+		for n in tostring(t):gmatch("-?%d*%.?%d+") do table.insert(nums, math.abs(tonumber(n) or 1)) end
+		if #nums == 1 then B.Size = V(nums[1], nums[1], nums[1])
+		elseif #nums == 2 then B.Size = V(nums[1], nums[2], nums[1])
+		elseif #nums >= 3 then B.Size = V(nums[1], nums[2], nums[3]) end
+		B.Size = V(math.clamp(B.Size.X, 0.1, 256), math.clamp(B.Size.Y, 0.1, 256), math.clamp(B.Size.Z, 0.1, 256))
+		box.Text = fmtSize(B.Size)
+		touch()
+	end)
+	note(ctrl, "Размер можно написать: «4 1 4» или одно число для куба.")
+
+	local SizePresets = {
+		["Куб 1×1×1"] = V(1, 1, 1), ["Плита 4×1×4"] = V(4, 1, 4), ["Стена 4×4×1"] = V(4, 4, 1),
+		["Колонна 1×8×1"] = V(1, 8, 1), ["Пол 16×1×16"] = V(16, 1, 16), ["Мини 0.5"] = V(0.5, 0.5, 0.5),
+	}
+	cycle(ctrl, "Пресет размера", { "Плита 4×1×4", "Куб 1×1×1", "Стена 4×4×1", "Колонна 1×8×1", "Пол 16×1×16", "Мини 0.5" }, "Плита 4×1×4", function(v)
+		B.Size = SizePresets[v]
+		sync()
+	end)
+
+	cycle(ctrl, "Форма", ShapeNames, B.Shape, function(v) B.Shape = v touch() end)
+	setTr = slider(ctrl, "Прозрачность", 0, 1, B.Transparency, 0.05, 1, function(v) B.Transparency = v touch() end)
+	setRf = slider(ctrl, "Блеск (отражение)", 0, 1, B.Reflect, 0.05, 1, function(v) B.Reflect = v touch() end)
+	setRot = slider(ctrl, "Поворот (°)", 0, 345, B.Rot, 15, 360, function(v) B.Rot = v touch() end)
+	button(ctrl, "Повернуть +90°", rotate90)
+
+	toggle(ctrl, "Сетка (привязка)", B.Grid, function(v) B.Grid = v end)
+	slider(ctrl, "Шаг сетки", 0.25, 8, B.GridSize, 0.25, 64, function(v) B.GridSize = v end)
+	toggle(ctrl, "Закреплённый (Anchored)", B.Anchored, function(v) B.Anchored = v end)
+	toggle(ctrl, "Столкновения", B.Collide, function(v) B.Collide = v end)
+	toggle(ctrl, "Светится (PointLight)", B.Light, function(v) B.Light = v end)
+	toggle(ctrl, "Призрак-превью", B.Ghost, function(v) B.Ghost = v end)
+
+	button(ctrl, "Отменить последнее (Z)", undo)
+
+	local armed = false
+	local clearBtn
+	clearBtn = button(ctrl, "Убрать всё построенное", function()
+		if not armed then
+			armed = true
+			clearBtn.Text = "Точно? Нажми ещё раз"
+			task.delay(3, function()
+				armed = false
+				if clearBtn.Parent then clearBtn.Text = "Убрать всё построенное" end
+			end)
+			return
+		end
+		armed = false
+		clearBtn.Text = "Убрать всё построенное"
+		folder:ClearAllChildren()
+		History = {}
+		updCount()
+	end, true)
+
+	button(ctrl, "Забрать молоток", function()
+		removeToolById(HAMMER.Id)
+		given = false
+		ctrl.Visible = false
+		giveBtn.Text = "Give — получить молоток"
+	end, true)
+
+	-----------------------------------------------------------------
+	-- КРЕДИТЫ + МИНИ-ИГРА «Лови идеи»
+	-----------------------------------------------------------------
+	local ORANGE, RED = Color3.fromRGB(217, 119, 87), Color3.fromRGB(235, 70, 80)
+	local function bars(parent, color, rots, w)
+		for _, r in ipairs(rots) do
+			local f = create("Frame", {
+				AnchorPoint = Vector2.new(0.5, 0.5),
+				Position = UDim2.fromScale(0.5, 0.5),
+				Size = UDim2.fromScale(w, 1),
+				Rotation = r,
+				BackgroundColor3 = color,
+				BorderSizePixel = 0,
+			}, parent)
+			create("UICorner", { CornerRadius = UDim.new(1, 0) }, f)
+		end
+	end
+
+	local bestScore = 0
+	local function openClaudeGame()
+		local p = showPopup(340, 300, "Claude · Лови идеи")
+		local alive, running = true, false
+		p.Destroying:Connect(function() alive, running = false, false end)
+		local score, combo, timeLeft = 0, 0, 30
+		local AW, AH = 316, 186
+
+		local hud = create("TextLabel", {
+			BackgroundTransparency = 1,
+			Position = UDim2.fromOffset(14, 40),
+			Size = UDim2.new(1, -28, 0, 22),
+			TextSize = 14,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Text = "",
+		}, p)
+		bind(hud, "TextColor3", "Text")
+		bind(hud, "Font", "Font")
+		local function refresh()
+			hud.Text = string.format("Счёт %d · Комбо x%d · %d с · Рекорд %d", score, combo, math.max(0, math.ceil(timeLeft)), bestScore)
+		end
+		refresh()
+
+		local area = create("Frame", {
+			Position = UDim2.fromOffset(12, 66),
+			Size = UDim2.fromOffset(AW, AH),
+			BorderSizePixel = 0,
+			ClipsDescendants = true,
+		}, p)
+		bind(area, "BackgroundColor3", "Panel")
+		corner(area)
+
+		local flash = create("Frame", {
+			Size = UDim2.fromScale(1, 1),
+			BackgroundColor3 = RED,
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			ZIndex = 6,
+		}, area)
+
+		local msg = create("TextLabel", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.5, 0.3),
+			Size = UDim2.new(1, -20, 0, 50),
+			BackgroundTransparency = 1,
+			TextWrapped = true,
+			TextSize = 17,
+			Text = "Лови идеи (оранжевые звёзды)\nи обходи баги (красные крестики)",
+			ZIndex = 4,
+		}, area)
+		bind(msg, "TextColor3", "Text")
+		bind(msg, "Font", "Font")
+
+		local startGame
+		local startBtn = button(area, "Играть", function() startGame() end)
+		startBtn.AnchorPoint = Vector2.new(0.5, 0.5)
+		startBtn.Position = UDim2.fromScale(0.5, 0.68)
+		startBtn.Size = UDim2.fromOffset(140, 34)
+		startBtn.ZIndex = 4
+
+		local hint = create("TextLabel", {
+			BackgroundTransparency = 1,
+			Position = UDim2.fromOffset(14, 258),
+			Size = UDim2.new(1, -28, 0, 34),
+			TextWrapped = true,
+			TextSize = 13,
+			TextTransparency = 0.25,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextYAlignment = Enum.TextYAlignment.Top,
+			Text = "Звезда: +1 (комбо даёт бонус). Баг: −2. 30 секунд, дальше быстрее.",
+		}, p)
+		bind(hint, "TextColor3", "Text")
+		bind(hint, "Font", "Font")
+
+		local function pop(b, txt, color)
+			local l = create("TextLabel", {
+				BackgroundTransparency = 1,
+				Position = b.Position,
+				Size = b.Size,
+				Text = txt,
+				TextSize = 22,
+				TextColor3 = color,
+				Font = Enum.Font.GothamBold,
+				TextStrokeTransparency = 0.5,
+				ZIndex = 5,
+			}, area)
+			tw(l, 0.6, { Position = b.Position - UDim2.fromOffset(0, 30), TextTransparency = 1, TextStrokeTransparency = 1 })
+			Debris:AddItem(l, 0.7)
+		end
+
+		local function spawnTarget(prog)
+			local bug = math.random() < 0.18 + 0.14 * prog
+			local size = math.floor(50 - 20 * prog)
+			local life = 1.4 - 0.7 * prog
+			local b = create("TextButton", {
+				Name = "T",
+				Size = UDim2.fromOffset(size, size),
+				Position = UDim2.fromOffset(math.random(0, AW - size), math.random(0, AH - size)),
+				BackgroundTransparency = 1,
+				Text = "",
+				AutoButtonColor = false,
+			}, area)
+			local sc = create("UIScale", { Scale = 0.01 }, b)
+			if bug then bars(b, RED, { 45, -45 }, 0.22) else bars(b, ORANGE, { 0, 60, 120 }, 0.2) end
+			tw(sc, 0.18, { Scale = 1 }, Enum.EasingStyle.Back)
+
+			local done = false
+			local function vanish()
+				tw(sc, 0.12, { Scale = 0.01 })
+				Debris:AddItem(b, 0.2)
+			end
+			b.Activated:Connect(function()
+				if done or not running then return end
+				done = true
+				if bug then
+					score = math.max(0, score - 2)
+					combo = 0
+					pop(b, "-2", RED)
+					flash.BackgroundTransparency = 0.6
+					tw(flash, 0.3, { BackgroundTransparency = 1 })
+				else
+					local gain = 1 + math.floor(combo / 5)
+					combo += 1
+					score += gain
+					pop(b, "+" .. gain, ORANGE)
+				end
+				vanish()
+				refresh()
+			end)
+			task.delay(life, function()
+				if done or not b.Parent then return end
+				done = true
+				if not bug then combo = 0 end
+				vanish()
+			end)
+		end
+
+		startGame = function()
+			if running then return end
+			running, score, combo, timeLeft = true, 0, 0, 30
+			startBtn.Visible, msg.Visible = false, false
+			refresh()
+			task.spawn(function()
+				local acc, last = 0, os.clock()
+				while alive and running and timeLeft > 0 do
+					task.wait(0.05)
+					local now = os.clock()
+					local dt = now - last
+					last = now
+					timeLeft -= dt
+					acc += dt
+					local prog = math.clamp(1 - timeLeft / 30, 0, 1)
+					if acc >= 0.75 - 0.45 * prog then
+						acc = 0
+						spawnTarget(prog)
+					end
+					refresh()
+				end
+				running = false
+				if not alive then return end
+				for _, c in ipairs(area:GetChildren()) do
+					if c.Name == "T" then c:Destroy() end
+				end
+				local rec = score > bestScore
+				if rec then bestScore = score end
+				timeLeft = 0
+				refresh()
+				msg.Text = "Счёт: " .. score .. (rec and "\nНовый рекорд!" or "")
+				msg.Visible = true
+				startBtn.Text = "Ещё раз"
+				startBtn.Visible = true
+			end)
+		end
+	end
+
+	local pCred = addTab("Кредиты")
+	note(pCred, "LizaHubC v4")
+	local crow = create("TextButton", {
+		Size = UDim2.new(1, 0, 0, 56),
+		Text = "",
+		AutoButtonColor = false,
+		BorderSizePixel = 0,
+	}, pCred)
+	bind(crow, "BackgroundColor3", "Panel")
+	corner(crow)
+	fx(crow)
+	local gl = create("Frame", {
+		Position = UDim2.fromOffset(12, 10),
+		Size = UDim2.fromOffset(36, 36),
+		BackgroundTransparency = 1,
+	}, crow)
+	bars(gl, ORANGE, { 0, 60, 120 }, 0.2)
+	track(RS.Heartbeat:Connect(function()
+		if gl.Parent then gl.Rotation = (os.clock() * 40) % 360 end
+	end))
+	local cn = create("TextLabel", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(60, 6),
+		Size = UDim2.new(1, -70, 0, 26),
+		Text = "Claude",
+		TextSize = 20,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, crow)
+	bind(cn, "TextColor3", "Text")
+	bind(cn, "Font", "Font")
+	local cs2 = create("TextLabel", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(60, 32),
+		Size = UDim2.new(1, -70, 0, 18),
+		Text = "Нажми — сыграть в мини-игру",
+		TextSize = 13,
+		TextTransparency = 0.3,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, crow)
+	bind(cs2, "TextColor3", "Text")
+	bind(cs2, "Font", "Font")
+	crow.Activated:Connect(openClaudeGame)
+	note(pCred, "Вкладки Building и Кредиты добавлены с помощью Claude (Anthropic).")
+end
+
 
 ---------------------------------------------------------------------
 -- ГОРЯЧИЕ КЛАВИШИ
